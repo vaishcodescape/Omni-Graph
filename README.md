@@ -1,9 +1,5 @@
 # OmniGraph — Enterprise AI Knowledge Graph
 
-[![Python 3.14+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![PostgreSQL 14+](https://img.shields.io/badge/PostgreSQL-14+-336791.svg)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
 **An AI-powered knowledge intelligence system** that turns unstructured organizational data (reports, emails, code, research) into a queryable semantic graph with RBAC, full-text search, and audit trails.
 
 ---
