@@ -18,11 +18,11 @@ from typing import Optional
 
 import psycopg2
 
-from ingestion_pipeline import DatabaseConnection, DocumentIngester
-from entity_relation_extractor import EntityRelationExtractor
-from graph_builder import KnowledgeGraphBuilder
-from semantic_query_engine import SemanticQueryEngine
-from access_control_audit import AccessControlManager
+from .ingestion_pipeline import DatabaseConnection, DocumentIngester
+from .entity_relation_extractor import EntityRelationExtractor
+from .graph_builder import KnowledgeGraphBuilder
+from .semantic_query_engine import SemanticQueryEngine
+from .access_control_audit import AccessControlManager
 
 # ---------------------------------------------------------------------------
 # Logging
