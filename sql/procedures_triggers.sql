@@ -2,7 +2,7 @@
 -- OmniGraph: Enterprise AI Knowledge Graph Database System
 -- Stored Procedures & Triggers
 -- ============================================================================
--- Run AFTER database_schema.sql and sample_data.sql
+-- Run AFTER schema.sql and sample_data.sql
 -- ============================================================================
 
 SET search_path TO omnigraph;

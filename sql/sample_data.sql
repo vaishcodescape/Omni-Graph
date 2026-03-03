@@ -2,8 +2,8 @@
 -- OmniGraph: Enterprise AI Knowledge Graph Database System
 -- Sample Data Population Script
 -- ============================================================================
--- Run AFTER database_schema.sql
--- Usage: psql -U postgres -d omnigraph -f sample_data.sql
+-- Run AFTER schema.sql
+-- Usage: psql -d omnigraph -f sql/sample_data.sql
 -- ============================================================================
 
 SET search_path TO omnigraph;
