@@ -12,6 +12,7 @@ from .entity_relation_extractor import EntityRelationExtractor
 from .graph_builder import KnowledgeGraphBuilder
 from .semantic_query_engine import SemanticQueryEngine
 from .access_control_audit import AccessControlManager
+from .agentic_rag import OmniGraphAgent, get_default_llm
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -98,6 +99,7 @@ class OmniGraphConsole:
         self.graph_builder = None
         self.query_engine = None
         self.access_manager = None
+        self.agent = None
         self.current_user_id = None
         self.current_username = None
 
@@ -219,31 +221,60 @@ class OmniGraphConsole:
         """Search and discovery sub-menu."""
         while True:
             print_header("Search & Discover")
-            print("  [1] Search Documents (Full-text)")
-            print("  [2] Search Documents (Hybrid/Semantic)")
-            print("  [3] Find Domain Experts")
-            print("  [4] Explore Related Concepts")
-            print("  [5] Entity Document Lookup")
-            print("  [6] View Entity Neighborhood")
+            print("  [1] Ask (Agent) — natural-language question over the knowledge graph")
+            print("  [2] Search Documents (Full-text)")
+            print("  [3] Search Documents (Hybrid/Semantic)")
+            print("  [4] Find Domain Experts")
+            print("  [5] Explore Related Concepts")
+            print("  [6] Entity Document Lookup")
+            print("  [7] View Entity Neighborhood")
             print("  [0] Back")
             print(THIN_SEP)
 
             choice = prompt_str("Select option")
 
             if choice == "1":
-                self._fulltext_search()
+                self._ask_agent()
             elif choice == "2":
-                self._hybrid_search()
+                self._fulltext_search()
             elif choice == "3":
-                self._find_experts()
+                self._hybrid_search()
             elif choice == "4":
-                self._related_concepts()
+                self._find_experts()
             elif choice == "5":
-                self._entity_documents()
+                self._related_concepts()
             elif choice == "6":
+                self._entity_documents()
+            elif choice == "7":
                 self._entity_neighborhood()
             elif choice == "0":
                 break
+
+    def _ask_agent(self):
+        """Run the agentic RAG agent on a natural-language question."""
+        print_header("Ask (Agent)")
+        question = prompt_str("Your question")
+        if not question:
+            return
+        llm = get_default_llm()
+        if llm is None:
+            print("LLM is not configured. Please set the GROQ_API_KEY environment variable.")
+            return
+        if self.agent is None:
+            self.agent = OmniGraphAgent(self.db, self.current_user_id, llm)
+        try:
+            result = self.agent.run(question)
+            answer = result.get("answer", "")
+            print(f"\n  {answer}\n")
+            self.access_manager.log_audit(
+                user_id=self.current_user_id,
+                action="agent_query",
+                resource_type="system",
+                details=f"Agent question: {question[:80]}",
+            )
+        except Exception as exc:
+            logger.exception("Agent run failed")
+            print(f"  Agent error: {exc}")
 
     def _fulltext_search(self):
         """Execute full-text search."""
