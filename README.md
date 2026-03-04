@@ -68,7 +68,7 @@ At startup, the console prompts for DB connection values and a username.
 
 Sample usernames (from `sql/sample_data.sql`):
 
-- `agarwal.priya`
+- `albert.cheng`
 - `chen.wei`
 - `johnson.mark`
 - `martinez.sofia`
