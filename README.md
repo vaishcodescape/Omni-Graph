@@ -1,13 +1,6 @@
 # OmniGraph
 
-Enterprise knowledge graph system that ingests organizational documents, extracts entities/concepts/relationships, and supports secure retrieval through full-text, semantic, and graph-based search.
-
-## What This Project Includes
-
-- PostgreSQL schema with 19 tables (BCNF-oriented design), indexes, constraints, stored procedures, and triggers
-- Python package for ingestion, extraction, graph operations, search, RBAC, and audit
-- Interactive console application for search, document management, and admin/audit workflows
-- Optional LangGraph-based RAG workflow on top of the same retrieval and access-control layers
+Enterprise knowledge graph system that ingests organizational documents, extracts entities/concepts/relationships, and supports secure retrieval through full-text, semantic, and graph-based search. An agentic retrieval-augmented generation (RAG) workflow built with LangGraph sits on top of these primitives as the core query interface.
 
 ## Repository Layout
 
@@ -29,7 +22,7 @@ Omni-Graph/
     ├── semantic_query_engine.py
     ├── access_control_audit.py
     ├── console_app.py
-    └── rag_workflow.py
+    └── agentic_rag.py
 ```
 
 ## Prerequisites
@@ -128,17 +121,18 @@ Note: console authentication currently validates active username only (no passwo
 - Audit logging (`audit_logs`)
 - Reports for sensitive access and query analytics
 
-### 6. Optional RAG Workflow (`omnigraph/rag_workflow.py`)
+### 6. Agentic RAG — Core Query Path (`omnigraph/agentic_rag.py`)
 
-- LangGraph state workflow: retrieve -> generate
-- Reuses `SemanticQueryEngine` and `AccessControlManager`
-- Accepts a LangChain-compatible LLM (`llm.invoke(...)`)
+- **ReAct agent** (LangGraph `create_react_agent`) with OmniGraph tools as the primary way to query the knowledge graph.
+- **Tools**: `hybrid_search`, `find_experts`, `get_entity_documents`, `find_related_concepts`, `get_document_content` (all respect RBAC).
+- Console **Search & Discover** leads with **Ask (Agent)**; set `GROQ_API_KEY` (and install `langchain-groq`) to use.
 
 ## Console Menu Overview
 
 Main menus in `omnigraph/console_app.py`:
 
 1. `Search & Discover`
+- **Ask (Agent)** — natural-language question over the graph (agentic RAG)
 - Full-text search
 - Hybrid/semantic search
 - Find experts
