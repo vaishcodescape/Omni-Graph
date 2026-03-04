@@ -1,8 +1,4 @@
-"""
-OmniGraph — Enterprise AI Knowledge Graph Database System.
-
-Python package: ingestion, extraction, graph building, semantic query, access control.
-"""
+"""OmniGraph: ingestion, extraction, graph building, semantic query, access control."""
 
 from omnigraph.ingestion_pipeline import DatabaseConnection, DocumentIngester
 from omnigraph.entity_relation_extractor import EntityRelationExtractor

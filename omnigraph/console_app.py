@@ -1,22 +1,11 @@
-"""
-OmniGraph: Enterprise AI Knowledge Graph Database System
-========================================================
-Module: Interactive Console Application
+"""Interactive console: search, document management, admin, audit (prepared statements)."""
 
-Menu-driven console application that provides interactive access to
-the OmniGraph knowledge base. Supports searching, document management,
-user administration, and audit reporting — all via prepared statements.
-
-Author: OmniGraph Team
-"""
-
-import getpass
 import logging
-import sys
-from datetime import datetime
+import time
+from getpass import getpass
 from typing import Optional
 
-import psycopg2
+import psycopg2  # type: ignore[import-untyped]
 
 from .ingestion_pipeline import DatabaseConnection, DocumentIngester
 from .entity_relation_extractor import EntityRelationExtractor
@@ -24,18 +13,12 @@ from .graph_builder import KnowledgeGraphBuilder
 from .semantic_query_engine import SemanticQueryEngine
 from .access_control_audit import AccessControlManager
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("omnigraph.console")
 
-# ---------------------------------------------------------------------------
-# Display Helpers
-# ---------------------------------------------------------------------------
 SEPARATOR = "═" * 70
 THIN_SEP = "─" * 70
 
@@ -53,18 +36,7 @@ def print_header(title: str):
 
 
 def print_table(headers: list, rows: list, widths: Optional[list] = None):
-    """
-    Print a formatted ASCII table.
-
-    Parameters
-    ----------
-    headers : list of str
-        Column headers.
-    rows : list of list
-        Table rows.
-    widths : list of int, optional
-        Column widths. Auto-computed if None.
-    """
+    """Print ASCII table; widths auto-computed if None."""
     if not rows:
         print("  (No results)")
         return
@@ -116,19 +88,8 @@ def prompt_str(message: str, default: str = "") -> str:
         return default
 
 
-# ===========================================================================
-# Console Application
-# ===========================================================================
-
 class OmniGraphConsole:
-    """
-    Interactive console application for OmniGraph.
-
-    Provides menu-driven access for:
-    - Search: documents, experts, concepts
-    - Manage: add/update documents, manage tags
-    - Admin: users, roles, audit logs, graph stats
-    """
+    """Menu-driven console: search, document management, admin and audit."""
 
     def __init__(self):
         self.db = None
@@ -140,10 +101,6 @@ class OmniGraphConsole:
         self.current_user_id = None
         self.current_username = None
 
-    # ------------------------------------------------------------------
-    # Connection & Setup
-    # ------------------------------------------------------------------
-
     def connect(
         self,
         host: str = "localhost",
@@ -152,7 +109,7 @@ class OmniGraphConsole:
         user: str = "postgres",
         password: str = "postgres",
     ):
-        """Establish database connection and initialize modules."""
+        """Connect to DB and init ingester, extractor, graph builder, query engine, access manager."""
         self.db = DatabaseConnection(host, port, dbname, user, password)
         self.db.connect()
         self.ingester = DocumentIngester(self.db)
@@ -167,22 +124,19 @@ class OmniGraphConsole:
         if not username:
             return False
 
-        cur = self.db.conn.cursor()
-        cur.execute(
-            """
-            SELECT user_id, full_name FROM omnigraph.users
-            WHERE username = %s AND is_active = TRUE
-            """,
-            (username,),
-        )
-        row = cur.fetchone()
+        with self.db.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, full_name FROM omnigraph.users
+                WHERE username = %s AND is_active = TRUE
+                """,
+                (username,),
+            )
+            row = cur.fetchone()
         if row:
             self.current_user_id = row[0]
             self.current_username = row[1]
-            self.query_engine = SemanticQueryEngine(
-                self.db, user_id=self.current_user_id,
-            )
-            # Log login
+            self.query_engine = SemanticQueryEngine(self.db, user_id=self.current_user_id)
             self.access_manager.log_audit(
                 user_id=self.current_user_id,
                 action="login",
@@ -191,13 +145,8 @@ class OmniGraphConsole:
             )
             print(f"\n  Welcome, {self.current_username}!\n")
             return True
-        else:
-            print("\n  ✗ User not found or inactive.\n")
-            return False
-
-    # ------------------------------------------------------------------
-    # Main Menu
-    # ------------------------------------------------------------------
+        print("\n  ✗ User not found or inactive.\n")
+        return False
 
     def run(self):
         """Main application loop."""
@@ -209,7 +158,11 @@ class OmniGraphConsole:
         port = prompt_int("Database port", 5432)
         dbname = prompt_str("Database name", "omnigraph")
         db_user = prompt_str("Database user", "postgres")
-        db_pass = prompt_str("Database password", "postgres")
+        try:
+            db_pass_input = getpass("  Database password (leave blank to use environment): ")
+        except (EOFError, KeyboardInterrupt):
+            db_pass_input = ""
+        db_pass = db_pass_input or None
 
         try:
             self.connect(host, port, dbname, db_user, db_pass)
@@ -301,6 +254,16 @@ class OmniGraphConsole:
 
         results = self.query_engine.search(query, strategy="fulltext", limit=10)
 
+        # Enforce document-level access control on search results.
+        if self.access_manager:
+            results = [
+                r
+                for r in results
+                if self.access_manager.check_access(
+                    self.current_user_id, "document", r.get("document_id"), "read",
+                )
+            ]
+
         if results:
             headers = ["ID", "Title", "Type", "Score", "Author"]
             rows = [
@@ -325,6 +288,16 @@ class OmniGraphConsole:
             return
 
         results = self.query_engine.search(query, strategy="hybrid", limit=10)
+
+        # Enforce document-level access control on search results.
+        if self.access_manager:
+            results = [
+                r
+                for r in results
+                if self.access_manager.check_access(
+                    self.current_user_id, "document", r.get("document_id"), "read",
+                )
+            ]
 
         if results:
             headers = ["ID", "Title", "Type", "Score", "Sources"]
@@ -400,6 +373,16 @@ class OmniGraphConsole:
 
         docs = self.query_engine.get_entity_documents(entity)
 
+        # Enforce document-level access control on lookup results.
+        if self.access_manager:
+            docs = [
+                d
+                for d in docs
+                if self.access_manager.check_access(
+                    self.current_user_id, "document", d.get("document_id"), "read",
+                )
+            ]
+
         if docs:
             headers = ["ID", "Title", "Type", "Relevance", "Mentions"]
             rows = [
@@ -419,6 +402,12 @@ class OmniGraphConsole:
     def _entity_neighborhood(self):
         """View entity neighborhood graph."""
         print_header("Entity Neighborhood")
+        if not self.access_manager.validate_permission(
+            self.current_user_id, "view_graph",
+        ):
+            print("  ✗ Access denied. Requires 'view_graph' permission.")
+            return
+
         entity_id = prompt_int("Entity ID")
         if entity_id is None:
             return
@@ -561,26 +550,25 @@ class OmniGraphConsole:
         updates.append("updated_at = CURRENT_TIMESTAMP")
         params.append(doc_id)
 
-        cur = self.db.conn.cursor()
         try:
-            cur.execute(
-                f"UPDATE omnigraph.documents SET {', '.join(updates)} "
-                f"WHERE document_id = %s",
-                params,
-            )
-            self.db.conn.commit()
-
-            if cur.rowcount > 0:
-                print(f"\n  ✓ Document #{doc_id} updated successfully.")
-                self.access_manager.log_audit(
-                    user_id=self.current_user_id,
-                    action="update",
-                    resource_type="document",
-                    resource_id=doc_id,
-                    details=f"Updated metadata for document #{doc_id}",
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE omnigraph.documents SET {', '.join(updates)} "
+                    f"WHERE document_id = %s",
+                    params,
                 )
-            else:
-                print(f"\n  ✗ Document #{doc_id} not found.")
+                if cur.rowcount > 0:
+                    self.db.conn.commit()
+                    print(f"\n  ✓ Document #{doc_id} updated successfully.")
+                    self.access_manager.log_audit(
+                        user_id=self.current_user_id,
+                        action="update",
+                        resource_type="document",
+                        resource_id=doc_id,
+                        details=f"Updated metadata for document #{doc_id}",
+                    )
+                else:
+                    print(f"\n  ✗ Document #{doc_id} not found.")
         except psycopg2.Error as exc:
             self.db.conn.rollback()
             print(f"\n  ✗ Update failed: {exc}")
@@ -596,36 +584,33 @@ class OmniGraphConsole:
         if not tag_name:
             return
 
-        cur = self.db.conn.cursor()
         try:
-            # Get or create tag
-            cur.execute(
-                """
-                INSERT INTO omnigraph.tags (name)
-                VALUES (%s)
-                ON CONFLICT (name) DO NOTHING
-                RETURNING tag_id
-                """,
-                (tag_name.lower(),),
-            )
-            row = cur.fetchone()
-            if row is None:
+            with self.db.conn.cursor() as cur:
                 cur.execute(
-                    "SELECT tag_id FROM omnigraph.tags WHERE name = %s",
+                    """
+                    INSERT INTO omnigraph.tags (name)
+                    VALUES (%s)
+                    ON CONFLICT (name) DO NOTHING
+                    RETURNING tag_id
+                    """,
                     (tag_name.lower(),),
                 )
                 row = cur.fetchone()
-            tag_id = row[0]
-
-            # Link tag to document
-            cur.execute(
-                """
-                INSERT INTO omnigraph.document_tags (document_id, tag_id, tagged_by)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (document_id, tag_id) DO NOTHING
-                """,
-                (doc_id, tag_id, self.current_user_id),
-            )
+                if row is None:
+                    cur.execute(
+                        "SELECT tag_id FROM omnigraph.tags WHERE name = %s",
+                        (tag_name.lower(),),
+                    )
+                    row = cur.fetchone()
+                tag_id = row[0]
+                cur.execute(
+                    """
+                    INSERT INTO omnigraph.document_tags (document_id, tag_id, tagged_by)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (document_id, tag_id) DO NOTHING
+                    """,
+                    (doc_id, tag_id, self.current_user_id),
+                )
             self.db.conn.commit()
             print(f"\n  ✓ Tag '{tag_name}' added to document #{doc_id}.")
         except psycopg2.Error as exc:
@@ -640,68 +625,72 @@ class OmniGraphConsole:
         if doc_id is None:
             return
 
-        cur = self.db.conn.cursor()
+        # Check access before loading potentially sensitive content.
+        if not self.access_manager.check_access(
+            self.current_user_id, "document", doc_id, "read",
+        ):
+            print("  ✗ Access denied.")
+            return
+
         try:
-            cur.execute(
-                """
-                SELECT d.document_id, d.title, d.source_type,
-                       d.sensitivity_level, d.created_at, d.updated_at,
-                       u.full_name AS author, d.file_size_bytes,
-                       LEFT(d.summary, 300) AS summary,
-                       LEFT(d.content, 500) AS content_preview
-                FROM omnigraph.documents d
-                JOIN omnigraph.users u ON u.user_id = d.uploaded_by
-                WHERE d.document_id = %s
-                """,
-                (doc_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                print(f"  Document #{doc_id} not found.")
-                return
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT d.document_id, d.title, d.source_type,
+                           d.sensitivity_level, d.created_at, d.updated_at,
+                           u.full_name AS author, d.file_size_bytes,
+                           LEFT(d.summary, 300) AS summary,
+                           LEFT(d.content, 500) AS content_preview
+                    FROM omnigraph.documents d
+                    JOIN omnigraph.users u ON u.user_id = d.uploaded_by
+                    WHERE d.document_id = %s
+                    """,
+                    (doc_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    print(f"  Document #{doc_id} not found.")
+                    return
 
-            print(f"\n  ID:           {row[0]}")
-            print(f"  Title:        {row[1]}")
-            print(f"  Type:         {row[2]}")
-            print(f"  Sensitivity:  {row[3]}")
-            print(f"  Created:      {row[4]}")
-            print(f"  Updated:      {row[5]}")
-            print(f"  Author:       {row[6]}")
-            print(f"  Size:         {row[7]:,} bytes" if row[7] else "  Size:         N/A")
-            if row[8]:
-                print(f"  Summary:      {row[8]}")
-            print(f"\n  Content Preview:\n  {row[9]}...")
+                print(f"\n  ID:           {row[0]}")
+                print(f"  Title:        {row[1]}")
+                print(f"  Type:         {row[2]}")
+                print(f"  Sensitivity:  {row[3]}")
+                print(f"  Created:      {row[4]}")
+                print(f"  Updated:      {row[5]}")
+                print(f"  Author:       {row[6]}")
+                print(f"  Size:         {row[7]:,} bytes" if row[7] else "  Size:         N/A")
+                if row[8]:
+                    print(f"  Summary:      {row[8]}")
+                print(f"\n  Content Preview:\n  {row[9]}...")
 
-            # Tags
-            cur.execute(
-                """
-                SELECT t.name FROM omnigraph.document_tags dt
-                JOIN omnigraph.tags t ON t.tag_id = dt.tag_id
-                WHERE dt.document_id = %s ORDER BY t.name
-                """,
-                (doc_id,),
-            )
-            tags = [r[0] for r in cur.fetchall()]
-            if tags:
-                print(f"\n  Tags: {', '.join(tags)}")
+                cur.execute(
+                    """
+                    SELECT t.name FROM omnigraph.document_tags dt
+                    JOIN omnigraph.tags t ON t.tag_id = dt.tag_id
+                    WHERE dt.document_id = %s ORDER BY t.name
+                    """,
+                    (doc_id,),
+                )
+                tags = [r[0] for r in cur.fetchall()]
+                if tags:
+                    print(f"\n  Tags: {', '.join(tags)}")
 
-            # Linked entities
-            cur.execute(
-                """
-                SELECT e.name, e.entity_type, de.mention_count
-                FROM omnigraph.document_entities de
-                JOIN omnigraph.entities e ON e.entity_id = de.entity_id
-                WHERE de.document_id = %s
-                ORDER BY de.relevance DESC LIMIT 10
-                """,
-                (doc_id,),
-            )
-            entities = cur.fetchall()
-            if entities:
-                print("\n  Linked Entities:")
-                for ent in entities:
-                    print(f"    [{ent[1]}] {ent[0]} ({ent[2]} mentions)")
-
+                cur.execute(
+                    """
+                    SELECT e.name, e.entity_type, de.mention_count
+                    FROM omnigraph.document_entities de
+                    JOIN omnigraph.entities e ON e.entity_id = de.entity_id
+                    WHERE de.document_id = %s
+                    ORDER BY de.relevance DESC LIMIT 10
+                    """,
+                    (doc_id,),
+                )
+                entities = cur.fetchall()
+                if entities:
+                    print("\n  Linked Entities:")
+                    for ent in entities:
+                        print(f"    [{ent[1]}] {ent[0]} ({ent[2]} mentions)")
         except psycopg2.Error as exc:
             print(f"  ✗ Error: {exc}")
 
@@ -710,28 +699,33 @@ class OmniGraphConsole:
         print_header("Recent Documents")
         limit = prompt_int("Number of documents", 15)
 
-        cur = self.db.conn.cursor()
         try:
-            cur.execute(
-                """
-                SELECT d.document_id, d.title, d.source_type,
-                       d.sensitivity_level, u.full_name, d.created_at::DATE
-                FROM omnigraph.documents d
-                JOIN omnigraph.users u ON u.user_id = d.uploaded_by
-                WHERE d.is_archived = FALSE
-                ORDER BY d.created_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            rows = cur.fetchall()
-            headers = ["ID", "Title", "Type", "Sensitivity", "Author", "Date"]
-            display_rows = [
-                [r[0], str(r[1])[:35], r[2], r[3], r[4], str(r[5])]
-                for r in rows
-            ]
-            print_table(headers, display_rows, [6, 37, 16, 14, 20, 12])
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT d.document_id, d.title, d.source_type,
+                           d.sensitivity_level, u.full_name, d.created_at::DATE
+                    FROM omnigraph.documents d
+                    JOIN omnigraph.users u ON u.user_id = d.uploaded_by
+                    WHERE d.is_archived = FALSE
+                    ORDER BY d.created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
 
+            # Apply access control per document.
+            allowed_rows = []
+            for r in rows:
+                if self.access_manager and not self.access_manager.check_access(
+                    self.current_user_id, "document", r[0], "read",
+                ):
+                    continue
+                allowed_rows.append(r)
+            headers = ["ID", "Title", "Type", "Sensitivity", "Author", "Date"]
+            display_rows = [[r[0], str(r[1])[:35], r[2], r[3], r[4], str(r[5])] for r in allowed_rows]
+            print_table(headers, display_rows, [6, 37, 16, 14, 20, 12])
         except psycopg2.Error as exc:
             print(f"  ✗ Error: {exc}")
 
@@ -741,6 +735,13 @@ class OmniGraphConsole:
 
         doc_id = prompt_int("Document ID")
         if doc_id is None:
+            return
+
+        # Require read access to the document before processing it.
+        if not self.access_manager.check_access(
+            self.current_user_id, "document", doc_id, "read",
+        ):
+            print("  ✗ Access denied.")
             return
 
         print("  Running extraction pipeline...")
@@ -800,6 +801,12 @@ class OmniGraphConsole:
         """Display knowledge graph statistics."""
         print_header("Knowledge Graph Statistics")
 
+        if not self.access_manager.validate_permission(
+            self.current_user_id, "view_graph",
+        ):
+            print("  ✗ Access denied. Requires 'view_graph' permission.")
+            return
+
         stats = self.graph_builder.get_graph_stats()
 
         print(f"  Total Documents:      {stats.get('total_documents', 0)}")
@@ -823,6 +830,13 @@ class OmniGraphConsole:
     def _taxonomy_tree(self):
         """Display taxonomy hierarchy."""
         print_header("Taxonomy Tree")
+
+        if not self.access_manager.validate_permission(
+            self.current_user_id, "view_graph",
+        ):
+            print("  ✗ Access denied. Requires 'view_graph' permission.")
+            return
+
         root = prompt_str("Root node name (blank for all)")
 
         tree = self.graph_builder.get_taxonomy_tree(root if root else None)
@@ -835,6 +849,13 @@ class OmniGraphConsole:
     def _concept_hierarchy(self):
         """Display concept hierarchy."""
         print_header("Concept Hierarchy")
+
+        if not self.access_manager.validate_permission(
+            self.current_user_id, "view_graph",
+        ):
+            print("  ✗ Access denied. Requires 'view_graph' permission.")
+            return
+
         root = prompt_str("Root concept (e.g., Machine Learning)")
         if not root:
             return
@@ -980,6 +1001,14 @@ class OmniGraphConsole:
     def _custom_query(self):
         """Execute a custom SQL SELECT query (read-only)."""
         print_header("Custom SQL Query")
+
+        # Restrict to administrative users; this is a powerful introspection tool.
+        if not self.access_manager.validate_permission(
+            self.current_user_id, "manage_users",
+        ):
+            print("  ✗ Access denied. Requires 'manage_users' permission.")
+            return
+
         print("  Enter a SELECT query (read-only). Type 'done' on a new line to execute.")
 
         lines = []
@@ -993,38 +1022,71 @@ class OmniGraphConsole:
         if not query:
             return
 
-        # Safety: only allow SELECT
-        if not query.upper().startswith("SELECT"):
-            print("  ✗ Only SELECT queries are allowed.")
+        # Basic read-only guardrails: allow SELECT/CTE and reject obvious write DDL/DML.
+        normalized = " ".join(query.split())
+        upper = normalized.upper()
+        if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+            print("  ✗ Only SELECT/CTE queries are allowed.")
             return
 
-        cur = self.db.conn.cursor()
+        disallowed_keywords = (
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "DROP",
+            "ALTER",
+            "TRUNCATE",
+            "CREATE",
+            "GRANT",
+            "REVOKE",
+        )
+        padded = f" {upper} "
+        if any(f" {kw} " in padded for kw in disallowed_keywords):
+            print("  ✗ Detected potentially unsafe statement; only read-only queries are allowed.")
+            return
+
+        start_time = time.time()
         try:
-            cur.execute(query)
-            columns = [desc[0] for desc in cur.description] if cur.description else []
-            rows = cur.fetchall()
+            with self.db.conn.cursor() as cur:
+                cur.execute(query)
+                columns = [desc[0] for desc in cur.description] if cur.description else []
+                rows = cur.fetchall()
+            elapsed_ms = int((time.time() - start_time) * 1000)
 
             if columns and rows:
-                display_rows = [
-                    [str(v)[:40] for v in row]
-                    for row in rows[:50]
-                ]
+                display_rows = [[str(v)[:40] for v in row] for row in rows[:50]]
                 print_table(columns, display_rows)
                 print(f"\n  ({len(rows)} rows returned)")
             else:
                 print("  Query returned no results.")
 
+            # Log usage for audit and analytics.
+            if self.access_manager:
+                try:
+                    self.access_manager.log_query(
+                        user_id=self.current_user_id,
+                        query_text=query[:1000],
+                        query_type="custom_sql",
+                        results_count=len(rows),
+                        execution_ms=elapsed_ms,
+                    )
+                    self.access_manager.log_audit(
+                        user_id=self.current_user_id,
+                        action="run_custom_query",
+                        resource_type="system",
+                        details=f"Custom SQL query executed (rows={len(rows)})",
+                    )
+                except Exception as log_exc:  # pragma: no cover - defensive
+                    logger.warning("Failed to log custom SQL usage: %s", log_exc)
         except psycopg2.Error as exc:
             print(f"  ✗ Query error: {exc}")
             try:
                 self.db.conn.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_exc:
+                logger.error("Rollback after custom SQL query failed: %s", rollback_exc)
+                print("  ⚠ Database connection may be in an invalid state after rollback failure.")
 
 
-# ===========================================================================
-# Entry Point
-# ===========================================================================
 if __name__ == "__main__":
     console = OmniGraphConsole()
     try:
