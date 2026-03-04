@@ -4,7 +4,7 @@
 
 ---
 
-## How to read this (for recruiters)
+## Overview
 
 - **Target roles**: Backend Engineer · Data/Platform Engineer · ML / Search Engineer
 - **Project type**: End-to-end, single-repo system (schema design → backend modules → CLI)
