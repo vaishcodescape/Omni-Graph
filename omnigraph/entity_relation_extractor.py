@@ -1,36 +1,13 @@
-"""
-OmniGraph: Enterprise AI Knowledge Graph Database System
-========================================================
-Module: Entity & Relationship Extractor
-
-Extracts named entities, concepts, and relationships from document text.
-Uses pattern-based NER (regex + keyword dictionaries) for portability
-without heavy ML framework dependencies.
-
-Author: OmniGraph Team
-"""
+"""Pattern-based NER and relation extraction from text (regex + keyword dicts)."""
 
 import logging
 import re
-from collections import Counter
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
-import psycopg2
+import psycopg2  # type: ignore[import-untyped]
+from psycopg2.extras import execute_values
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
 logger = logging.getLogger("omnigraph.extractor")
-
-# ---------------------------------------------------------------------------
-# Entity Type Dictionaries
-# ---------------------------------------------------------------------------
-# These keyword lists serve as a lightweight NER approach.
-# In production you would replace this with spaCy / Hugging Face models.
 
 TECHNOLOGY_KEYWORDS = {
     "Kubernetes", "Docker", "TensorFlow", "PyTorch", "BERT", "GPT",
@@ -56,38 +33,21 @@ STANDARD_KEYWORDS = {
     "NIST 800-53", "OWASP", "CIS", "ITIL", "TOGAF", "COBIT",
 }
 
-# Concept domain mapping
 CONCEPT_DOMAINS = {
-    "machine learning":     "AI",
-    "deep learning":        "AI",
-    "natural language processing": "AI",
-    "computer vision":      "AI",
-    "knowledge graph":      "AI",
-    "neural network":       "AI",
-    "transfer learning":    "AI",
-    "reinforcement learning": "AI",
-    "cybersecurity":        "Security",
-    "zero trust":           "Security",
-    "encryption":           "Security",
-    "threat detection":     "Security",
-    "cloud computing":      "Infrastructure",
-    "containerization":     "Infrastructure",
-    "microservices":        "Engineering",
-    "api design":           "Engineering",
-    "devops":               "Operations",
-    "ci/cd":                "Operations",
-    "data governance":      "Compliance",
-    "compliance":           "Compliance",
-    "predictive analytics": "Analytics",
-    "supply chain":         "Business",
-    "data pipeline":        "Engineering",
-    "graph neural network": "AI",
-    "federated learning":   "AI",
-    "privacy":              "Compliance",
+    "machine learning": "AI", "deep learning": "AI",
+    "natural language processing": "AI", "computer vision": "AI",
+    "knowledge graph": "AI", "neural network": "AI", "transfer learning": "AI",
+    "reinforcement learning": "AI", "cybersecurity": "Security", "zero trust": "Security",
+    "encryption": "Security", "threat detection": "Security",
+    "cloud computing": "Infrastructure", "containerization": "Infrastructure",
+    "microservices": "Engineering", "api design": "Engineering",
+    "devops": "Operations", "ci/cd": "Operations", "data governance": "Compliance",
+    "compliance": "Compliance", "predictive analytics": "Analytics", "supply chain": "Business",
+    "data pipeline": "Engineering", "graph neural network": "AI", "federated learning": "AI",
+    "privacy": "Compliance",
 }
 
-# Relationship patterns (regex-based)
-RELATIONSHIP_PATTERNS = [
+_REL_PATTERNS_RAW = [
     (r"(\w[\w\s]*?)\s+(?:is developed by|was developed by|created by)\s+(\w[\w\s]*)", "developed_by"),
     (r"(\w[\w\s]*?)\s+(?:works for|employed at|works at)\s+(\w[\w\s]*)", "works_for"),
     (r"(\w[\w\s]*?)\s+(?:collaborates with|partners with)\s+(\w[\w\s]*)", "collaborates_with"),
@@ -98,88 +58,39 @@ RELATIONSHIP_PATTERNS = [
     (r"(\w[\w\s]*?)\s+(?:manages|oversees|leads)\s+(\w[\w\s]*)", "manages"),
     (r"(\w[\w\s]*?)\s+(?:is located in|based in|headquartered in)\s+(\w[\w\s]*)", "located_in"),
 ]
+RELATIONSHIP_PATTERNS = [(re.compile(p, re.IGNORECASE), t) for p, t in _REL_PATTERNS_RAW]
+
+PERSON_PATTERN = re.compile(
+    r"\b((?:Dr\.|Prof\.|Mr\.|Ms\.|Mrs\.)\s+[A-Z][a-z]+\s+[A-Z][a-z]+)\b"
+)
 
 
 class EntityRelationExtractor:
-    """
-    Extracts entities, concepts, and relationships from document text.
+    """Extracts entities, concepts, and relationships from text.
 
-    Methods
-    -------
-    extract_entities(text) -> list of dict
-        Identify named entities in text.
-    extract_concepts(text) -> list of dict
-        Identify domain concepts in text.
-    extract_relationships(text, entities) -> list of dict
-        Identify typed relationships between entities.
-    process_document(document_id) -> dict
-        Full extraction pipeline for a stored document.
+    Persistence methods (_store_entities/_store_concepts/_store_relationships)
+    each execute in their own transaction (commit or rollback). The high-level
+    process_document() call is therefore best-effort: a failure in one stage
+    does not automatically roll back others.
     """
 
     def __init__(self, db_connection):
-        """
-        Parameters
-        ----------
-        db_connection : DatabaseConnection
-            Active database connection instance.
-        """
         self.db = db_connection
 
-    # ------------------------------------------------------------------
-    # Entity Extraction
-    # ------------------------------------------------------------------
-
     def extract_entities(self, text: str) -> List[Dict]:
-        """
-        Extract named entities from text using keyword matching.
-
-        Parameters
-        ----------
-        text : str
-            Document content.
-
-        Returns
-        -------
-        list of dict
-            Each dict: {name, entity_type, confidence, mention_count, positions}.
-        """
+        """Named entities via keyword match + person pattern."""
         entities = []
-
-        # Technology entities
-        entities.extend(
-            self._match_keywords(text, TECHNOLOGY_KEYWORDS, "technology")
-        )
-        # Organization entities
-        entities.extend(
-            self._match_keywords(text, ORGANIZATION_KEYWORDS, "organization")
-        )
-        # Standard entities
-        entities.extend(
-            self._match_keywords(text, STANDARD_KEYWORDS, "standard")
-        )
-        # Person entities (pattern-based)
+        entities.extend(self._match_keywords(text, TECHNOLOGY_KEYWORDS, "technology"))
+        entities.extend(self._match_keywords(text, ORGANIZATION_KEYWORDS, "organization"))
+        entities.extend(self._match_keywords(text, STANDARD_KEYWORDS, "standard"))
         entities.extend(self._extract_persons(text))
-
         logger.info("Extracted %d entities from text.", len(entities))
         return entities
 
     def extract_concepts(self, text: str) -> List[Dict]:
-        """
-        Identify domain concepts mentioned in the text.
-
-        Parameters
-        ----------
-        text : str
-            Document content.
-
-        Returns
-        -------
-        list of dict
-            Each dict: {name, domain, relevance_score, mention_count}.
-        """
+        """Domain concepts from CONCEPT_DOMAINS; returns list of {name, domain, relevance_score, mention_count}."""
         text_lower = text.lower()
         concepts = []
-
         for concept, domain in CONCEPT_DOMAINS.items():
             count = text_lower.count(concept)
             if count > 0:
@@ -190,44 +101,21 @@ class EntityRelationExtractor:
                     "relevance_score": round(relevance, 3),
                     "mention_count": count,
                 })
-
-        # Sort by relevance descending
         concepts.sort(key=lambda c: c["relevance_score"], reverse=True)
         logger.info("Extracted %d concepts from text.", len(concepts))
         return concepts
 
-    def extract_relationships(
-        self,
-        text: str,
-        entities: List[Dict],
-    ) -> List[Dict]:
-        """
-        Extract typed relationships between entities from text.
-
-        Parameters
-        ----------
-        text : str
-            Document content.
-        entities : list of dict
-            Previously extracted entities.
-
-        Returns
-        -------
-        list of dict
-            Each dict: {source, target, relation_type, strength}.
-        """
-        relationships = []
+    def extract_relationships(self, text: str, entities: List[Dict]) -> List[Dict]:
+        """Typed relationships between entities; deduplicated."""
         entity_names = {e["name"] for e in entities}
+        relationships = []
 
         for pattern, rel_type in RELATIONSHIP_PATTERNS:
-            for match in re.finditer(pattern, text, re.IGNORECASE):
+            for match in pattern.finditer(text):
                 source = match.group(1).strip()
                 target = match.group(2).strip()
-
-                # Validate that at least one entity is known
                 source_match = self._fuzzy_match(source, entity_names)
                 target_match = self._fuzzy_match(target, entity_names)
-
                 if source_match and target_match and source_match != target_match:
                     relationships.append({
                         "source": source_match,
@@ -236,7 +124,6 @@ class EntityRelationExtractor:
                         "strength": 0.750,
                     })
 
-        # Deduplicate
         seen = set()
         unique = []
         for rel in relationships:
@@ -244,151 +131,120 @@ class EntityRelationExtractor:
             if key not in seen:
                 seen.add(key)
                 unique.append(rel)
-
         logger.info("Extracted %d relationships from text.", len(unique))
         return unique
 
-    # ------------------------------------------------------------------
-    # Full Pipeline
-    # ------------------------------------------------------------------
-
     def process_document(self, document_id: int) -> Dict:
-        """
-        Run the full extraction pipeline on a stored document.
-
-        Parameters
-        ----------
-        document_id : int
-            ID of the document to process.
-
-        Returns
-        -------
-        dict
-            {entities: [...], concepts: [...], relationships: [...]}.
-        """
-        # Fetch document content
-        cur = self.db.conn.cursor()
-        cur.execute(
-            "SELECT content FROM omnigraph.documents WHERE document_id = %s",
-            (document_id,),
-        )
-        row = cur.fetchone()
+        """Full pipeline: fetch doc, extract entities/concepts/relationships, persist."""
+        with self.db.conn.cursor() as cur:
+            cur.execute(
+                "SELECT content FROM omnigraph.documents WHERE document_id = %s",
+                (document_id,),
+            )
+            row = cur.fetchone()
         if not row:
             logger.error("Document %d not found.", document_id)
             return {"entities": [], "concepts": [], "relationships": []}
 
         content = row[0]
-
-        # Extract
         entities = self.extract_entities(content)
         concepts = self.extract_concepts(content)
         relationships = self.extract_relationships(content, entities)
 
-        # Persist entities
         self._store_entities(entities, document_id)
-        # Persist concepts
         self._store_concepts(concepts, document_id)
-        # Persist relationships
         self._store_relationships(relationships, document_id)
 
         logger.info(
             "Processed document %d: %d entities, %d concepts, %d relationships.",
             document_id, len(entities), len(concepts), len(relationships),
         )
-
         return {
             "entities": entities,
             "concepts": concepts,
             "relationships": relationships,
         }
 
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
-
     def _store_entities(self, entities: List[Dict], document_id: int) -> None:
-        """Store extracted entities and link them to the document."""
-        cur = self.db.conn.cursor()
-        for entity in entities:
-            try:
-                # Upsert entity
-                cur.execute(
-                    """
-                    INSERT INTO omnigraph.entities (name, entity_type, confidence)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (name, entity_type) DO UPDATE
-                        SET confidence = GREATEST(entities.confidence, EXCLUDED.confidence)
-                    RETURNING entity_id
-                    """,
-                    (entity["name"], entity["entity_type"], entity["confidence"]),
-                )
-                entity_id = cur.fetchone()[0]
+        """Upsert entities and link to document; batch link insert."""
+        if not entities:
+            return
+        entity_ids = []
+        with self.db.conn.cursor() as cur:
+            for entity in entities:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO omnigraph.entities (name, entity_type, confidence)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (name, entity_type) DO UPDATE
+                            SET confidence = GREATEST(entities.confidence, EXCLUDED.confidence)
+                        RETURNING entity_id
+                        """,
+                        (entity["name"], entity["entity_type"], entity["confidence"]),
+                    )
+                    entity_ids.append((cur.fetchone()[0], entity))
+                except psycopg2.Error as exc:
+                    logger.warning("Entity storage error: %s", exc)
+                    continue
 
-                # Link to document
-                cur.execute(
+            if entity_ids:
+                link_rows = [
+                    (document_id, eid, ent["confidence"], ent["mention_count"])
+                    for eid, ent in entity_ids
+                ]
+                execute_values(
+                    cur,
                     """
                     INSERT INTO omnigraph.document_entities
                         (document_id, entity_id, relevance, mention_count)
-                    VALUES (%s, %s, %s, %s)
+                    VALUES %s
                     ON CONFLICT (document_id, entity_id) DO UPDATE
                         SET mention_count = EXCLUDED.mention_count,
                             relevance = EXCLUDED.relevance
                     """,
-                    (
-                        document_id, entity_id,
-                        entity["confidence"],
-                        entity["mention_count"],
-                    ),
+                    link_rows,
                 )
-            except psycopg2.Error as exc:
-                logger.warning("Entity storage error: %s", exc)
-                self.db.conn.rollback()
-                continue
-
         try:
             self.db.conn.commit()
         except psycopg2.Error:
             self.db.conn.rollback()
 
     def _store_concepts(self, concepts: List[Dict], document_id: int) -> None:
-        """Store extracted concepts and link them to the document."""
-        cur = self.db.conn.cursor()
-        for concept in concepts:
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO omnigraph.concepts (name, domain)
-                    VALUES (%s, %s)
-                    ON CONFLICT (name) DO NOTHING
-                    RETURNING concept_id
-                    """,
-                    (concept["name"], concept["domain"]),
-                )
-                row = cur.fetchone()
-                if row is None:
-                    cur.execute(
-                        "SELECT concept_id FROM omnigraph.concepts WHERE name = %s",
-                        (concept["name"],),
-                    )
-                    row = cur.fetchone()
-
-                if row:
-                    concept_id = row[0]
+        """Upsert concepts and link to document."""
+        with self.db.conn.cursor() as cur:
+            for concept in concepts:
+                try:
                     cur.execute(
                         """
-                        INSERT INTO omnigraph.document_concepts
-                            (document_id, concept_id, relevance_score, extracted_by)
-                        VALUES (%s, %s, %s, 'system')
-                        ON CONFLICT (document_id, concept_id) DO UPDATE
-                            SET relevance_score = EXCLUDED.relevance_score
+                        INSERT INTO omnigraph.concepts (name, domain)
+                        VALUES (%s, %s)
+                        ON CONFLICT (name) DO NOTHING
+                        RETURNING concept_id
                         """,
-                        (document_id, concept_id, concept["relevance_score"]),
+                        (concept["name"], concept["domain"]),
                     )
-            except psycopg2.Error as exc:
-                logger.warning("Concept storage error: %s", exc)
-                self.db.conn.rollback()
-                continue
-
+                    row = cur.fetchone()
+                    if row is None:
+                        cur.execute(
+                            "SELECT concept_id FROM omnigraph.concepts WHERE name = %s",
+                            (concept["name"],),
+                        )
+                        row = cur.fetchone()
+                    if row:
+                        cur.execute(
+                            """
+                            INSERT INTO omnigraph.document_concepts
+                                (document_id, concept_id, relevance_score, extracted_by)
+                            VALUES (%s, %s, %s, 'system')
+                            ON CONFLICT (document_id, concept_id) DO UPDATE
+                                SET relevance_score = EXCLUDED.relevance_score
+                            """,
+                            (document_id, row[0], concept["relevance_score"]),
+                        )
+                except psycopg2.Error as exc:
+                    logger.warning("Concept storage error: %s", exc)
+                    continue
         try:
             self.db.conn.commit()
         except psycopg2.Error:
@@ -397,137 +253,133 @@ class EntityRelationExtractor:
     def _store_relationships(
         self, relationships: List[Dict], document_id: int,
     ) -> None:
-        """Store extracted relationships."""
-        cur = self.db.conn.cursor()
-        for rel in relationships:
-            try:
-                # Look up entity IDs
+        """Resolve entity names to IDs and insert relations."""
+        if not relationships:
+            return
+        name_to_id: Dict[str, int] = {}
+        with self.db.conn.cursor() as cur:
+            names = set()
+            for rel in relationships:
+                names.add(rel["source"])
+                names.add(rel["target"])
+            for name in names:
                 cur.execute(
                     "SELECT entity_id FROM omnigraph.entities WHERE name = %s LIMIT 1",
-                    (rel["source"],),
+                    (name,),
                 )
-                source_row = cur.fetchone()
+                row = cur.fetchone()
+                if row:
+                    name_to_id[name] = row[0]
 
-                cur.execute(
-                    "SELECT entity_id FROM omnigraph.entities WHERE name = %s LIMIT 1",
-                    (rel["target"],),
-                )
-                target_row = cur.fetchone()
-
-                if source_row and target_row:
-                    source_id = source_row[0]
-                    target_id = target_row[0]
-                    if source_id != target_id:
-                        cur.execute(
-                            """
-                            INSERT INTO omnigraph.relations
-                                (source_entity_id, target_entity_id, relation_type,
-                                 strength, source_document_id)
-                            VALUES (%s, %s, %s, %s, %s)
-                            ON CONFLICT DO NOTHING
-                            """,
-                            (source_id, target_id, rel["relation_type"],
-                             rel["strength"], document_id),
-                        )
-            except psycopg2.Error as exc:
-                logger.warning("Relationship storage error: %s", exc)
-                self.db.conn.rollback()
-                continue
-
+            for rel in relationships:
+                source_id = name_to_id.get(rel["source"])
+                target_id = name_to_id.get(rel["target"])
+                if not source_id or not target_id or source_id == target_id:
+                    continue
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO omnigraph.relations
+                            (source_entity_id, target_entity_id, relation_type,
+                             strength, source_document_id)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (source_id, target_id, rel["relation_type"],
+                         rel["strength"], document_id),
+                    )
+                except psycopg2.Error as exc:
+                    logger.warning("Relationship storage error: %s", exc)
+                    continue
         try:
             self.db.conn.commit()
         except psycopg2.Error:
             self.db.conn.rollback()
 
-    # ------------------------------------------------------------------
-    # Internal Helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _match_keywords(
-        text: str,
-        keywords: Set[str],
-        entity_type: str,
+        text: str, keywords: Set[str], entity_type: str,
     ) -> List[Dict]:
-        """Match keyword-based entities in text."""
-        results = []
-        for keyword in keywords:
-            pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-            matches = pattern.findall(text)
-            if matches:
-                positions = [m.start() for m in pattern.finditer(text)]
-                confidence = min(0.995, 0.700 + len(matches) * 0.05)
-                results.append({
-                    "name": keyword,
-                    "entity_type": entity_type,
-                    "confidence": round(confidence, 3),
-                    "mention_count": len(matches),
-                    "positions": positions,
-                })
+        """Match keyword-based entities in text (single pass over text).
+
+        Builds a combined regex for all keywords to avoid compiling and
+        scanning once per keyword, which is costly on large documents.
+        """
+        if not text or not keywords:
+            return []
+
+        # Build alternation with longest keywords first to prefer specific matches.
+        sorted_keywords = sorted(keywords, key=len, reverse=True)
+        pattern = re.compile(
+            "|".join(re.escape(k) for k in sorted_keywords),
+            re.IGNORECASE,
+        )
+
+        # Aggregate matches per canonical keyword.
+        match_positions: Dict[str, List[int]] = {}
+        for m in pattern.finditer(text):
+            matched_text = m.group(0)
+            # Canonicalize to the configured keyword casing if possible.
+            canonical = next(
+                (k for k in keywords if k.lower() == matched_text.lower()),
+                matched_text,
+            )
+            match_positions.setdefault(canonical, []).append(m.start())
+
+        results: List[Dict] = []
+        for keyword, positions in match_positions.items():
+            count = len(positions)
+            confidence = min(0.995, 0.700 + count * 0.05)
+            results.append({
+                "name": keyword,
+                "entity_type": entity_type,
+                "confidence": round(confidence, 3),
+                "mention_count": count,
+                "positions": positions,
+            })
         return results
 
     @staticmethod
     def _extract_persons(text: str) -> List[Dict]:
-        """
-        Extract person names using common name patterns.
-
-        Matches patterns like: Dr. FirstName LastName, Prof. FirstName LastName,
-        or capitalized two-word sequences that look like names.
-        """
-        patterns = [
-            r"\b((?:Dr\.|Prof\.|Mr\.|Ms\.|Mrs\.)\s+[A-Z][a-z]+\s+[A-Z][a-z]+)\b",
-        ]
+        """Person names via title + name pattern."""
         persons = []
-        seen = set()
+        seen = {}
+        for match in PERSON_PATTERN.finditer(text):
+            name = match.group(1).strip()
+            positions = seen.setdefault(name, [])
+            positions.append(match.start())
 
-        for pat in patterns:
-            for match in re.finditer(pat, text):
-                name = match.group(1).strip()
-                if name not in seen:
-                    seen.add(name)
-                    count = text.count(name)
-                    persons.append({
-                        "name": name,
-                        "entity_type": "person",
-                        "confidence": round(min(0.900, 0.600 + count * 0.1), 3),
-                        "mention_count": count,
-                        "positions": [match.start()],
-                    })
-
+        for name, positions in seen.items():
+            count = len(positions)
+            persons.append({
+                "name": name,
+                "entity_type": "person",
+                "confidence": round(min(0.900, 0.600 + count * 0.1), 3),
+                "mention_count": count,
+                "positions": positions,
+            })
         return persons
 
     @staticmethod
     def _fuzzy_match(candidate: str, known_names: Set[str]) -> Optional[str]:
-        """Case-insensitive match of candidate against known entity names."""
+        """Case-insensitive match; fallback to partial match."""
         candidate_lower = candidate.lower().strip()
-        for name in known_names:
-            if name.lower() == candidate_lower:
-                return name
-        # Partial match
-        for name in known_names:
-            if name.lower() in candidate_lower or candidate_lower in name.lower():
-                return name
-        return None
+        if not candidate_lower or not known_names:
+            return None
 
-    # ------------------------------------------------------------------
-    # Classification Helpers
-    # ------------------------------------------------------------------
+        # Precompute lower-cased mapping once per call for efficiency.
+        lower_map = {name.lower(): name for name in known_names}
+        if candidate_lower in lower_map:
+            return lower_map[candidate_lower]
+
+        for lower_name, original in lower_map.items():
+            if lower_name in candidate_lower or candidate_lower in lower_name:
+                return original
+        return None
 
     @staticmethod
     def classify_entity(name: str) -> str:
-        """
-        Classify an entity name into a type based on keyword dictionaries.
-
-        Parameters
-        ----------
-        name : str
-            Entity name to classify.
-
-        Returns
-        -------
-        str
-            One of: 'technology', 'organization', 'standard', 'other'.
-        """
+        """Classify entity name into technology, organization, standard, or other."""
         if name in TECHNOLOGY_KEYWORDS:
             return "technology"
         if name in ORGANIZATION_KEYWORDS:
@@ -537,9 +389,6 @@ class EntityRelationExtractor:
         return "other"
 
 
-# ---------------------------------------------------------------------------
-# Module Entry Point
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     sample_text = """
     Google has developed TensorFlow and BERT for machine learning and
@@ -549,7 +398,7 @@ if __name__ == "__main__":
     for authentication and follows GDPR compliance standards.
     Dr. Sarah Lin leads the NLP research division.
     """
-
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     extractor = EntityRelationExtractor(db_connection=None)
 
     print("=== Entity Extraction ===")

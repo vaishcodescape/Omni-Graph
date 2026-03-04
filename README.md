@@ -1,23 +1,12 @@
 # OmniGraph — Enterprise AI Knowledge Graph
 
-**An AI-powered knowledge intelligence system** that turns unstructured organizational data (reports, emails, code, research) into a queryable semantic graph with RBAC, full-text search, and audit trails.
-
----
-
-## Overview
-
-- **Target roles**: Backend Engineer · Data/Platform Engineer · ML / Search Engineer
-- **Project type**: End-to-end, single-repo system (schema design → backend modules → CLI)
-- **Time-saver**: If you only have 2–3 minutes, skim:
-  - **Highlights** (next section)
-  - **Tech stack**
-  - **Project structure** (to see code organization)
+**An AI-powered knowledge intelligence system** that turns unstructured organizational data (reports, emails, code, research) into a queryable semantic graph with role-based access control (RBAC), full-text search, and audit trails.
 
 ---
 
 ## Highlights
 
-- **Production-style database design**: 19-table PostgreSQL schema in BCNF with 6 stored procedures, 5 triggers, recursive CTEs, full-text search, and embeddings.
+- **Production-style database design**: 19-table PostgreSQL schema in Boyce–Codd normal form (BCNF) with 6 stored procedures, 5 triggers, recursive common table expressions (CTEs), full-text search, and embeddings.
 - **Modular Python backend**: Separate modules for ingestion, entity/relationship extraction, graph building, semantic query, and RBAC/audit.
 - **Security-first querying**: Every DB call uses parameterized queries via `psycopg2` and is governed by role-based access control with full audit logging.
 - **Search & semantics**: Hybrid search that combines full-text, vector similarity, and graph traversal to surface relevant documents and domain experts.
@@ -38,7 +27,7 @@ pip install -r requirements.txt
 python run.py
 ```
 
-Default demo user: **priya.sharma**
+Default demo user: **admin**
 
 ---
 
@@ -50,7 +39,8 @@ Default demo user: **priya.sharma**
 | **Backend**   | Python 3.8+                 |
 | **DB driver** | psycopg2                    |
 | **Search**    | PostgreSQL Full-Text Search |
-| **Auth**      | RBAC + audit logs           |
+| **Auth**      | Role-based access control (RBAC) + audit logs |
+| **RAG / LLM** | LangGraph + LangChain-compatible chat models  |
 
 ---
 
@@ -92,7 +82,49 @@ Omni-Graph/
 | **Extraction** | NER (entities), concept tagging, relationship extraction, DB persistence |
 | **Graph** | Entity/concept nodes, typed relations, taxonomy, concept hierarchy, graph stats |
 | **Search** | Full-text, vector similarity, graph traversal, expert finding, hybrid ranking |
-| **Security** | RBAC, permission checks, query + audit logging, sensitive-access reports |
+| **Security** | Role-based access control (RBAC), permission checks, query + audit logging, sensitive-access reports |
+
+---
+
+## Implementation details (Python modules)
+
+- **`omnigraph/ingestion_pipeline.py`**  
+  - `DatabaseConnection`: Thin psycopg2 wrapper that reads credentials from `OMNIGRAPH_DB_USER` / `OMNIGRAPH_DB_PASSWORD` when not passed explicitly, with lazy reconnection.  
+  - `DocumentIngester`: Implements document ingest (normalize → hash → dedup → insert), batch ingestion, and document versioning; each method manages its own transaction boundary and rolls back on failure.
+
+- **`omnigraph/entity_relation_extractor.py`**  
+  - `EntityRelationExtractor`: Pattern-based NER and relation extraction using keyword dictionaries, compiled relationship regexes, and a person-name pattern.  
+  - Optimized implementations: single-pass keyword matching over all keywords, batched person extraction without repeated `text.count`, and a small fuzzy-matching helper for mapping relationship spans back to known entities.  
+  - Persists entities, concepts, and relationships into `entities`, `concepts`, `document_entities`, `document_concepts`, and `relations` via best-effort, per-stage transactions.
+
+- **`omnigraph/graph_builder.py`**  
+  - `KnowledgeGraphBuilder`: Programmatic graph management — add/remove entities, add relationships, attach entities to documents, add taxonomy nodes and concept hierarchy links.  
+  - Read operations: recursive CTEs for taxonomy and concept hierarchy, neighborhood queries, duplicate detection, and aggregate graph statistics.  
+  - Each mutating method wraps its own commit/rollback so calls are atomic at the operation level.
+
+- **`omnigraph/semantic_query_engine.py`**  
+  - `SemanticQueryEngine`: Unified search layer with full-text (`tsvector`/`tsquery`), vector similarity (hash-based demo embeddings), graph traversal, and hybrid search.  
+  - `search()`: Parses query intent, delegates to the appropriate strategy, then deduplicates and re-ranks results with per-source weights. Hybrid search fetches more candidates per modality and then applies a global limit.  
+  - `graph_traverse()`: Uses entity/relationship hops to find related documents, with guardrails on regex construction to avoid pathological patterns.
+
+- **`omnigraph/access_control_audit.py`**  
+  - `AccessControlManager`: Central RBAC layer that evaluates per-resource access policies based on roles and sensitivity level, logs query and audit events, and exposes helpers for user roles, access matrix, and analytics.  
+  - All permission checks and audit logging for the console and search engine go through this module.
+
+- **`omnigraph/console_app.py`**  
+  - `OmniGraphConsole`: Menu-driven CLI that wires together ingestion, extraction, graph building, semantic query, and access control.  
+  - Enforces access control on document reads/writes and graph introspection, and restricts the custom SQL console to admin users with defense-in-depth checks (SELECT/CTE-only, keyword filters, query/audit logging).  
+  - Provides the primary user experience for search, document management, audit viewing, and role management.
+
+- **`omnigraph/__init__.py`**  
+  - Package facade that exports the main building blocks (`DatabaseConnection`, `DocumentIngester`, `EntityRelationExtractor`, `KnowledgeGraphBuilder`, `SemanticQueryEngine`, `AccessControlManager`) for direct library-style use.
+
+- **`omnigraph/rag_workflow.py`**  
+  - `OmniGraphRAG`: A LangGraph-based retrieval-augmented generation (RAG) workflow that:
+    - Uses `SemanticQueryEngine` to perform hybrid retrieval (full-text + semantic + graph).
+    - Applies `AccessControlManager` checks to filter out documents the user cannot read.
+    - Calls a provided LangChain-compatible chat model to generate answers using retrieved context.  
+  - **Recruiter lens**: Shows how I would integrate an existing search/graph stack into an LLM orchestration framework (LangGraph), keeping the model layer pluggable and respecting existing security constraints.
 
 ---
 
@@ -103,7 +135,7 @@ Omni-Graph/
 │  Console CLI (Search · Manage Documents · Admin)    │
 ├─────────────────────────────────────────────────────┤
 │  Ingestion → Extraction → Graph Builder → Query     │
-│  Access Control & Audit (RBAC, logging)             │
+│  Access Control & Audit (role-based access control, logging) │
 ├─────────────────────────────────────────────────────┤
 │  PostgreSQL: 19 tables, FTS, embeddings, triggers   │
 └─────────────────────────────────────────────────────┘
@@ -120,7 +152,7 @@ See the diagram in `omnigraph-architecture.drawio` for a visual.
 - **Mappings**: `document_entities`, `document_concepts`, `entity_concepts`, `embeddings`
 - **Audit**: `query_logs`, `audit_logs`
 
-Schema is normalized to **BCNF**. SQL files include constraints, indexes, stored procedures, and triggers for realistic behavior (versioning, taxonomy maintenance, audit logging, etc.).
+Schema is normalized to **Boyce–Codd normal form (BCNF)**. SQL files include constraints, indexes, stored procedures, and triggers for realistic behavior (versioning, taxonomy maintenance, audit logging, etc.).
 
 ---
 
@@ -136,10 +168,10 @@ All DB access uses **parameterized queries** (psycopg2 `%s`) to prevent SQL inje
 
 ## Skills demonstrated
 
-- **Databases**: Schema design, normalization (BCNF), stored procedures, triggers, recursive CTEs, full-text search.
-- **Python**: Modular design, type hints, logging, CLI UX, context managers, defensive error handling.
-- **Security**: RBAC, audit trails, least-privilege access patterns, prepared statements.
-- **NLP / knowledge**: Entity/concept extraction, relationship extraction, semantic search, graph traversal.
+- **Databases**: Schema design, normalization (Boyce–Codd normal form, BCNF), stored procedures, triggers, recursive common table expressions (CTEs), full-text search.
+- **Python**: Modular design, type hints, logging, command-line interface (CLI) user experience (UX), context managers, defensive error handling.
+- **Security**: Role-based access control (RBAC), audit trails, least-privilege access patterns, prepared statements.
+- **Natural language processing (NLP) / knowledge**: Entity/concept extraction, relationship extraction, semantic search, graph traversal.
 
 ---
 
