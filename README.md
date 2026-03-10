@@ -27,7 +27,7 @@ Omni-Graph/
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.14+
 - PostgreSQL 14+
 - `pip`
 
