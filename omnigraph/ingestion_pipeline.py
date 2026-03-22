@@ -292,6 +292,120 @@ class DocumentIngester:
                 f"Invalid sensitivity_level '{level}'. Must be one of: {SENSITIVITY_LEVELS}"
             )
 
+    def update_document(
+        self,
+        document_id: int,
+        changed_by: int,
+        title: Optional[str] = None,
+        summary: Optional[str] = None,
+        sensitivity_level: Optional[str] = None,
+        content: Optional[str] = None,
+        change_summary: Optional[str] = None,
+    ) -> Optional[int]:
+        """Update document fields; if content changes, append document_versions row. Returns document_id or None."""
+        if all(v is None for v in (title, summary, sensitivity_level, content)):
+            logger.warning("update_document: no fields to update for document_id=%s", document_id)
+            return None
+        if sensitivity_level is not None:
+            self._validate_sensitivity(sensitivity_level)
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT title, summary, sensitivity_level, content, content_hash
+                    FROM omnigraph.documents
+                    WHERE document_id = %s AND is_archived = FALSE
+                    """,
+                    (document_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    logger.warning("update_document: document %s not found or archived.", document_id)
+                    return None
+                cur_title, cur_summary, cur_sens, cur_content, cur_hash = row
+
+                new_title = title if title is not None else cur_title
+                new_summary = summary if summary is not None else cur_summary
+                new_sens = sensitivity_level if sensitivity_level is not None else cur_sens
+                new_content = cur_content
+                new_hash = cur_hash
+
+                if content is not None:
+                    normalized = self.normalize_text(content)
+                    new_content = normalized
+                    new_hash = self._compute_hash(normalized)
+                    if new_hash != cur_hash:
+                        cur.execute(
+                            """
+                            SELECT COALESCE(MAX(version_number), 0) + 1
+                            FROM omnigraph.document_versions WHERE document_id = %s
+                            """,
+                            (document_id,),
+                        )
+                        next_version = cur.fetchone()[0]
+                        cur.execute(
+                            """
+                            INSERT INTO omnigraph.document_versions
+                                (document_id, version_number, content, content_hash,
+                                 change_summary, changed_by)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                document_id,
+                                next_version,
+                                new_content,
+                                new_hash,
+                                change_summary or f"Agent update v{next_version}",
+                                changed_by,
+                            ),
+                        )
+
+                cur.execute(
+                    """
+                    UPDATE omnigraph.documents
+                    SET title = %s, summary = %s, sensitivity_level = %s,
+                        content = %s, content_hash = %s,
+                        file_size_bytes = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE document_id = %s
+                    """,
+                    (
+                        new_title,
+                        new_summary,
+                        new_sens,
+                        new_content,
+                        new_hash,
+                        len(new_content.encode("utf-8")),
+                        document_id,
+                    ),
+                )
+            self.db.conn.commit()
+            logger.info("Updated document id=%s.", document_id)
+            return document_id
+        except psycopg2.Error as exc:
+            self.db.conn.rollback()
+            logger.error("Failed to update document %s: %s", document_id, exc)
+            return None
+
+    def set_document_archived(self, document_id: int, archived: bool) -> bool:
+        """Set is_archived; returns True on success."""
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE omnigraph.documents
+                    SET is_archived = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE document_id = %s
+                    """,
+                    (archived, document_id),
+                )
+                ok = cur.rowcount > 0
+            self.db.conn.commit()
+            return ok
+        except psycopg2.Error as exc:
+            self.db.conn.rollback()
+            logger.error("set_document_archived failed for %s: %s", document_id, exc)
+            return False
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

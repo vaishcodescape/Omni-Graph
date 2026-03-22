@@ -95,6 +95,54 @@ class KnowledgeGraphBuilder:
             logger.error("Failed to remove entity %d: %s", entity_id, exc)
             return False
 
+    def update_entity_node(
+        self,
+        entity_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        confidence: Optional[float] = None,
+    ) -> bool:
+        """Update entity fields (only non-None args). Returns True if a row was updated."""
+        if all(v is None for v in (name, description, confidence)):
+            logger.warning("update_entity_node: no fields to update for entity_id=%s", entity_id)
+            return False
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name, entity_type, description, confidence FROM omnigraph.entities WHERE entity_id = %s",
+                    (entity_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return False
+                cur_name, entity_type, cur_desc, cur_conf = row
+                new_name = name if name is not None else cur_name
+                new_desc = description if description is not None else cur_desc
+                new_conf = confidence if confidence is not None else cur_conf
+                cur.execute(
+                    """
+                    UPDATE omnigraph.entities
+                    SET name = %s, description = %s, confidence = %s
+                    WHERE entity_id = %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM omnigraph.entities e2
+                          WHERE e2.entity_id <> %s
+                            AND LOWER(e2.name) = LOWER(%s)
+                            AND e2.entity_type = %s
+                      )
+                    """,
+                    (new_name, new_desc, new_conf, entity_id, entity_id, new_name, entity_type),
+                )
+                updated = cur.rowcount > 0
+            self.db.conn.commit()
+            if updated:
+                logger.info("Updated entity id=%s.", entity_id)
+            return updated
+        except psycopg2.Error as exc:
+            self.db.conn.rollback()
+            logger.error("Failed to update entity %d: %s", entity_id, exc)
+            return False
+
     def add_relationship(
         self,
         source_entity_id: int,
@@ -134,6 +182,24 @@ class KnowledgeGraphBuilder:
             self.db.conn.rollback()
             logger.error("Failed to add relationship: %s", exc)
             return None
+
+    def remove_relationship(self, relation_id: int) -> bool:
+        """Delete a relationship row by relation_id."""
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM omnigraph.relations WHERE relation_id = %s",
+                    (relation_id,),
+                )
+                deleted = cur.rowcount > 0
+            self.db.conn.commit()
+            if deleted:
+                logger.info("Removed relation id=%d.", relation_id)
+            return deleted
+        except psycopg2.Error as exc:
+            self.db.conn.rollback()
+            logger.error("Failed to remove relation %d: %s", relation_id, exc)
+            return False
 
     def map_document_entity(
         self,

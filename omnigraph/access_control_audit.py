@@ -53,6 +53,38 @@ class AccessControlManager:
             )
         return has_access
 
+    def check_policy_at_sensitivity(
+        self,
+        user_id: int,
+        resource_type: str,
+        sensitivity_level: str,
+        action: str = "write",
+    ) -> bool:
+        """True if any role allows action on resource_type at this sensitivity (e.g. new document at tier)."""
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM omnigraph.user_roles ur
+                        JOIN omnigraph.access_policies ap ON ur.role_id = ap.role_id
+                        WHERE ur.user_id = %s AND ap.resource_type = %s
+                          AND ap.sensitivity_level = %s
+                          AND (
+                              (%s = 'read'   AND ap.can_read = TRUE) OR
+                              (%s = 'write'  AND ap.can_write = TRUE) OR
+                              (%s = 'delete' AND ap.can_delete = TRUE)
+                          )
+                    )
+                    """,
+                    (user_id, resource_type, sensitivity_level, action, action, action),
+                )
+                return bool(cur.fetchone()[0])
+        except psycopg2.Error as exc:
+            logger.error("Policy-at-sensitivity check failed: %s", exc)
+            return False
+
     def validate_permission(self, user_id: int, required_permission: str) -> bool:
         """True if user has required_permission via any role."""
         try:
