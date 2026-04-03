@@ -9,7 +9,7 @@ Omni-Graph/
 ├── exec.py
 ├── requirements.txt
 ├── README.md
-├── Database Schema.jpeg
+├── database-schema.jpeg
 ├── sql/
 │   ├── schema.sql
 │   ├── sample_data.sql
@@ -88,7 +88,15 @@ All tables live in the PostgreSQL schema `omnigraph`. The full DDL (constraints,
 
 ### ER diagram (reference)
 
-![OmniGraph database schema](Database%20Schema.jpeg)
+The diagram file must sit **next to this README** at the repository root as `database-schema.jpeg` so GitHub, GitLab, and local Markdown previews can resolve the path.
+
+<p align="center">
+  <img
+    src="./database-schema.jpeg"
+    alt="OmniGraph database schema ER diagram: omnigraph tables, keys, and relationships"
+    width="920"
+  />
+</p>
 
 ### Tables (19)
 
