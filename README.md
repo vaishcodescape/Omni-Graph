@@ -9,6 +9,7 @@ Omni-Graph/
 ├── exec.py
 ├── requirements.txt
 ├── README.md
+├── Database Schema.jpeg
 ├── sql/
 │   ├── schema.sql
 │   ├── sample_data.sql
@@ -80,6 +81,46 @@ Sample usernames (from `sql/sample_data.sql`):
 - `brown.david`
 
 Note: console authentication currently validates active username only (no password verification in app logic).
+
+## Database schema
+
+All tables live in the PostgreSQL schema `omnigraph`. The full DDL (constraints, indexes, `CHECK` enums) is in [`sql/schema.sql`](sql/schema.sql).
+
+### ER diagram (reference)
+
+![OmniGraph database schema](Database%20Schema.jpeg)
+
+### Tables (19)
+
+| Table | Purpose |
+|-------|---------|
+| `roles` | Role definitions and permission arrays (`TEXT[]`). |
+| `users` | User accounts and profile fields. |
+| `user_roles` | Many-to-many assignment of roles to users. |
+| `access_policies` | Per-role rules on `resource_type` × `sensitivity_level` (`can_read` / `can_write` / `can_delete`). |
+| `taxonomy` | Hierarchical taxonomy nodes (`parent_id` self-reference, `level`, `domain`). |
+| `documents` | Core documents: content, `content_hash`, `source_type`, `sensitivity_level`, `taxonomy_id`, `uploaded_by`, `is_archived`, FTS via GIN on title+content. |
+| `document_versions` | Version history per document (`version_number`, content snapshot, `changed_by`). |
+| `entities` | Graph nodes: `name`, `entity_type`, optional description/canonical metadata, `confidence`. |
+| `concepts` | Topic nodes: `name`, `domain`, optional `taxonomy_id`, `relevance_score`. |
+| `tags` | Tag dictionary for document classification. |
+| `relations` | Directed edges between entities (`relation_type`, `strength`, optional `source_document_id`). |
+| `document_entities` | Links documents to entities (`relevance`, `mention_count`, `first_occurrence`). |
+| `document_tags` | Links documents to tags (`tagged_by`, `tagged_at`). |
+| `concept_hierarchy` | Parent/child edges between concepts (`relationship_type`). |
+| `entity_concepts` | Links entities to concepts (`relevance_score`). |
+| `document_concepts` | Links documents to concepts (`relevance_score`, `extracted_by`: system/manual/ai). |
+| `embeddings` | Vector storage per `source_type` (document/entity/concept) + `source_id` and `model_name` (`FLOAT[]`, unique per triple). |
+| `query_logs` | Search/query telemetry (`query_type`, `results_count`, `execution_ms`). |
+| `audit_logs` | Security audit events (`action`, `resource_type`, optional `resource_id`, `details`). |
+
+### Relationships (summary)
+
+- **Users ↔ roles**: `user_roles`.
+- **Documents**: belong to `taxonomy`, uploaded by `users`; versions in `document_versions`; linked to `entities`, `tags`, and `concepts` via junction tables.
+- **Graph**: `entities` connected by `relations`; `concepts` structured by `concept_hierarchy`; `entity_concepts` and `document_concepts` attach concepts to entities and documents.
+- **Semantic search**: `embeddings` rows reference logical sources by `(source_type, source_id)`.
+- **Governance**: `access_policies` drives RBAC checks; `query_logs` and `audit_logs` support observability.
 
 ## Core Capabilities
 
