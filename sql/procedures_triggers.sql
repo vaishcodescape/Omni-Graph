@@ -281,79 +281,21 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ============================================================================
--- TRIGGER 1: trg_audit_sensitive_access
--- Automatically logs an audit entry when a restricted or confidential
--- document is accessed (simulated via SELECT tracked in query_logs).
--- This trigger fires on INSERT to query_logs.
+-- TRIGGER 1: trg_audit_sensitive_access  [REMOVED]
+-- Replaced by direct audit logging in AccessControlManager.check_access().
+-- The trigger approach did a full LIKE scan of all sensitive documents on
+-- every query_log INSERT, produced false positives, and duplicated the
+-- audit entries that check_access() already writes precisely.
 -- ============================================================================
-CREATE OR REPLACE FUNCTION fn_audit_sensitive_access()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_doc RECORD;
-BEGIN
-    -- Check if the query references a sensitive document
-    FOR v_doc IN
-        SELECT document_id, title, sensitivity_level
-        FROM documents
-        WHERE sensitivity_level IN ('confidential', 'restricted')
-          AND (LOWER(NEW.query_text) LIKE '%' || LOWER(title) || '%'
-               OR NEW.query_text LIKE '%document_id = ' || document_id || '%')
-    LOOP
-        INSERT INTO audit_logs (user_id, action, resource_type, resource_id, details)
-        VALUES (NEW.user_id, 'view', 'document', v_doc.document_id,
-                FORMAT('Sensitive document accessed via query: %s (sensitivity: %s)',
-                       v_doc.title, v_doc.sensitivity_level));
-    END LOOP;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_audit_sensitive_access
-    AFTER INSERT ON query_logs
-    FOR EACH ROW
-    EXECUTE FUNCTION fn_audit_sensitive_access();
 
 -- ============================================================================
--- TRIGGER 2: trg_version_on_update
--- Automatically creates a version record whenever a document's content
--- is updated, preserving the previous version.
+-- TRIGGER 2: trg_version_on_update  [REMOVED]
+-- Replaced by versioning in DocumentIngester.update_document().
+-- The trigger duplicated version records (Python inserted one, trigger
+-- inserted another) and used NEW.uploaded_by as changed_by, which is
+-- always the original uploader rather than the person making the change.
+-- Python versioning is kept because it correctly records changed_by.
 -- ============================================================================
-CREATE OR REPLACE FUNCTION fn_version_on_update()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_next_version INTEGER;
-BEGIN
-    IF OLD.content IS DISTINCT FROM NEW.content THEN
-        -- Determine next version number
-        SELECT COALESCE(MAX(version_number), 0) + 1
-        INTO v_next_version
-        FROM document_versions
-        WHERE document_id = NEW.document_id;
-
-        -- Store previous content as a version
-        INSERT INTO document_versions (document_id, version_number, content, content_hash, change_summary, changed_by)
-        VALUES (
-            NEW.document_id,
-            v_next_version,
-            OLD.content,
-            OLD.content_hash,
-            'Auto-versioned on content update',
-            NEW.uploaded_by
-        );
-
-        -- Update the timestamp
-        NEW.updated_at := CURRENT_TIMESTAMP;
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_version_on_update
-    BEFORE UPDATE ON documents
-    FOR EACH ROW
-    EXECUTE FUNCTION fn_version_on_update();
 
 -- ============================================================================
 -- TRIGGER 3: trg_maintain_taxonomy

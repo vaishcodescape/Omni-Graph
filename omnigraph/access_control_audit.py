@@ -340,7 +340,7 @@ class AccessControlManager:
             self.db.conn.commit()
             self.log_audit(
                 user_id=assigned_by, action="update", resource_type="role",
-                resource_id=user_id, details=f"Assigned role {role_id} to user {user_id}",
+                resource_id=role_id, details=f"Assigned role {role_id} to user {user_id}",
             )
             return True
         except psycopg2.Error as exc:
@@ -359,13 +359,52 @@ class AccessControlManager:
             self.db.conn.commit()
             self.log_audit(
                 user_id=revoked_by, action="delete", resource_type="role",
-                resource_id=user_id, details=f"Revoked role {role_id} from user {user_id}",
+                resource_id=role_id, details=f"Revoked role {role_id} from user {user_id}",
             )
             return True
         except psycopg2.Error as exc:
             self.db.conn.rollback()
             logger.error("Failed to revoke role: %s", exc)
             return False
+
+    def filter_accessible_documents(
+        self, user_id: int, doc_ids: List[int], action: str = "read",
+    ) -> List[int]:
+        """Return the subset of doc_ids the user may access — 2 queries instead of 2×N.
+
+        Replaces per-document check_access() loops in search result filtering.
+        """
+        if not doc_ids:
+            return []
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT document_id, sensitivity_level FROM omnigraph.documents "
+                    "WHERE document_id = ANY(%s)",
+                    (doc_ids,),
+                )
+                doc_sensitivity = dict(cur.fetchall())
+
+                cur.execute(
+                    """
+                    SELECT DISTINCT ap.sensitivity_level
+                    FROM omnigraph.user_roles ur
+                    JOIN omnigraph.access_policies ap ON ur.role_id = ap.role_id
+                    WHERE ur.user_id = %s AND ap.resource_type = 'document'
+                      AND (
+                          (%s = 'read'   AND ap.can_read = TRUE) OR
+                          (%s = 'write'  AND ap.can_write = TRUE) OR
+                          (%s = 'delete' AND ap.can_delete = TRUE)
+                      )
+                    """,
+                    (user_id, action, action, action),
+                )
+                allowed = {row[0] for row in cur.fetchall()}
+
+            return [d for d in doc_ids if doc_sensitivity.get(d) in allowed]
+        except psycopg2.Error as exc:
+            logger.error("Batch access filter failed: %s", exc)
+            return []
 
     def _get_resource_sensitivity(self, resource_type: str, resource_id: int) -> Optional[str]:
         """Sensitivity level for resource; None if not found."""

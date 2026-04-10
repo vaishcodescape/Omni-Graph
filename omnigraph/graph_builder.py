@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, List, Optional
 
-import psycopg2  
+import psycopg2
 logger = logging.getLogger("omnigraph.graph_builder")
 
 _GRAPH_STATS_SQL = """
