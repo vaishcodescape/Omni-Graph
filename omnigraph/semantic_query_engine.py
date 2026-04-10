@@ -1,13 +1,13 @@
 """Full-text search, vector similarity, graph traversal, ranking, query logging."""
 
-import hashlib
 import logging
-import math
 import re
 import time
 from typing import Dict, List, Optional
 
-import psycopg2   
+import psycopg2
+
+from .embedder import generate_embedding
 
 logger = logging.getLogger("omnigraph.query_engine")
 
@@ -109,34 +109,26 @@ class SemanticQueryEngine:
             return []
 
     def vector_similarity_search(self, query: str, limit: int = 10) -> List[Dict]:
-        """Cosine similarity on embeddings (FLOAT[]). Query uses hash-based demo embedding."""
+        """Cosine similarity search via pgvector <=> operator (requires vector(1024) column)."""
         query_vector = self._generate_query_embedding(query)
+        query_str = "[" + ",".join(str(v) for v in query_vector) + "]"
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
                     """
-                    WITH query_vec AS (SELECT %s::FLOAT[] AS vec),
-                    similarities AS (
-                        SELECT e.source_id AS document_id, e.vector,
-                            (SELECT SUM(a * b) FROM UNNEST(e.vector, (SELECT vec FROM query_vec)) AS t(a, b))
-                            / NULLIF(
-                                SQRT((SELECT SUM(a * a) FROM UNNEST(e.vector) AS t(a)))
-                                * SQRT((SELECT SUM(b * b) FROM UNNEST((SELECT vec FROM query_vec)) AS t(b))), 0
-                            ) AS cosine_similarity
-                        FROM omnigraph.embeddings e
-                        WHERE e.source_type = 'document'
-                    )
                     SELECT d.document_id, d.title, d.source_type, d.sensitivity_level,
-                           s.cosine_similarity AS score, LEFT(d.summary, 200) AS summary,
+                           1 - (e.vector <=> %s::vector) AS score,
+                           LEFT(d.summary, 200) AS summary,
                            u.full_name AS author, d.created_at
-                    FROM similarities s
-                    JOIN omnigraph.documents d ON d.document_id = s.document_id
+                    FROM omnigraph.embeddings e
+                    JOIN omnigraph.documents d ON d.document_id = e.source_id
                     JOIN omnigraph.users u ON u.user_id = d.uploaded_by
-                    WHERE s.cosine_similarity IS NOT NULL AND d.is_archived = FALSE
-                    ORDER BY s.cosine_similarity DESC
+                    WHERE e.source_type = 'document'
+                      AND d.is_archived = FALSE
+                    ORDER BY e.vector <=> %s::vector
                     LIMIT %s
                     """,
-                    (query_vector, limit),
+                    (query_str, query_str, limit),
                 )
                 columns = ["document_id", "title", "source_type", "sensitivity_level",
                            "score", "summary", "author", "created_at"]
@@ -161,8 +153,7 @@ class SemanticQueryEngine:
 
         # Guardrails for regex construction: cap number and size of terms to avoid
         # building extremely large patterns that could be slow to evaluate.
-        unique_terms = list(dict.fromkeys(terms))
-        max_terms = 10
+        unique_terms = list(dict.fromkeys(terms))[:10]
         max_term_length = 64
         max_total_length = 256
 
@@ -428,18 +419,9 @@ class SemanticQueryEngine:
                 pass
 
     @staticmethod
-    def _generate_query_embedding(query: str, dimensions: int = 8) -> List[float]:
-        """Deterministic hash-based embedding for demo; use real embedding API in production."""
-        query_hash = hashlib.sha256(query.lower().encode()).hexdigest()
-        vector = []
-        for i in range(dimensions):
-            hex_chunk = query_hash[i * 4:(i + 1) * 4]
-            value = (int(hex_chunk, 16) / 65535.0) * 2 - 1
-            vector.append(round(value, 4))
-        magnitude = math.sqrt(sum(v * v for v in vector))
-        if magnitude > 0:
-            vector = [round(v / magnitude, 4) for v in vector]
-        return vector
+    def _generate_query_embedding(query: str) -> List[float]:
+        """1024-dim query embedding via Voyage AI voyage-3 (input_type='query')."""
+        return generate_embedding(query, input_type="query")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,42 @@ from typing import Dict, List, Optional, Tuple
 
 import psycopg2  # type: ignore[import-untyped]
 
+from .embedder import generate_embedding
+
 logger = logging.getLogger("omnigraph.ingestion")
+
+
+def store_embedding(db: "DatabaseConnection", source_id: int, source_type: str, text: str) -> None:
+    """Generate and upsert a Voyage AI embedding for any source type.
+
+    Matches the schema's UNIQUE (source_type, source_id, model_name) constraint and
+    supplies the required ``dimensions`` column. Requires the ``vector`` column to be
+    type ``vector(1024)`` — run ``migrations/002_pgvector_embeddings.sql`` first.
+    Never raises; failures are logged as warnings.
+    """
+    try:
+        vector = generate_embedding(text)
+        vector_str = "[" + ",".join(str(v) for v in vector) + "]"
+        with db.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO omnigraph.embeddings
+                    (source_id, source_type, vector, model_name, dimensions)
+                VALUES (%s, %s, %s::vector, 'voyage-3', 1024)
+                ON CONFLICT (source_type, source_id, model_name) DO UPDATE
+                    SET vector     = EXCLUDED.vector,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                (source_id, source_type, vector_str),
+            )
+        db.conn.commit()
+    except Exception as exc:
+        logger.warning("Failed to store %s embedding for id=%d: %s", source_type, source_id, exc)
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
+
 
 SUPPORTED_SOURCE_TYPES = {
     "report", "research_paper", "email", "technical_doc",
@@ -135,6 +170,7 @@ class DocumentIngester:
                 document_id = cur.fetchone()[0]
             self.db.conn.commit()
             logger.info("Ingested document '%s' (id=%d).", title, document_id)
+            self._store_embedding(document_id, normalized)
             return document_id
         except psycopg2.Error as exc:
             self.db.conn.rollback()
@@ -380,11 +416,57 @@ class DocumentIngester:
                 )
             self.db.conn.commit()
             logger.info("Updated document id=%s.", document_id)
+            if content is not None and new_hash != cur_hash:
+                self._store_embedding(document_id, new_content)
             return document_id
         except psycopg2.Error as exc:
             self.db.conn.rollback()
             logger.error("Failed to update document %s: %s", document_id, exc)
             return None
+
+    def _store_embedding(self, document_id: int, text: str) -> None:
+        """Generate and upsert document embedding. Never raises."""
+        store_embedding(self.db, document_id, "document", text)
+
+    def reembed_all_documents(self) -> Tuple[int, int]:
+        """Delete all existing embeddings and regenerate them using Voyage AI.
+
+        Fetches every non-archived document, clears the embeddings table, then
+        re-embeds each document one by one. Returns (success_count, failure_count).
+        """
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute("DELETE FROM omnigraph.embeddings WHERE source_type = 'document'")
+                deleted = cur.rowcount
+            self.db.conn.commit()
+            logger.info("Cleared %d existing document embeddings.", deleted)
+        except psycopg2.Error as exc:
+            self.db.conn.rollback()
+            logger.error("Failed to clear embeddings table: %s", exc)
+            return 0, 0
+
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT document_id, content FROM omnigraph.documents WHERE is_archived = FALSE"
+                )
+                rows = cur.fetchall()
+        except psycopg2.Error as exc:
+            logger.error("Failed to fetch documents for re-embedding: %s", exc)
+            return 0, 0
+
+        logger.info("Re-embedding %d documents with Voyage AI…", len(rows))
+        success = failure = 0
+        for document_id, content in rows:
+            try:
+                self._store_embedding(document_id, content)
+                success += 1
+            except Exception as exc:
+                logger.error("Failed to re-embed document %d: %s", document_id, exc)
+                failure += 1
+
+        logger.info("Re-embedding complete: %d succeeded, %d failed.", success, failure)
+        return success, failure
 
     def set_document_archived(self, document_id: int, archived: bool) -> bool:
         """Set is_archived; returns True on success."""

@@ -12,7 +12,7 @@ from .entity_relation_extractor import EntityRelationExtractor
 from .graph_builder import KnowledgeGraphBuilder
 from .semantic_query_engine import SemanticQueryEngine
 from .access_control_audit import AccessControlManager
-from .agentic_rag import OmniGraphAgent, get_default_llm
+from .agentic_rag import get_anthropic_agent
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -256,19 +256,18 @@ class OmniGraphConsole:
         question = prompt_str("Your question")
         if not question:
             return
-        llm = get_default_llm()
-        if llm is None:
-            print("LLM is not configured. Please set the GROQ_API_KEY environment variable.")
-            return
         if self.agent is None:
-            self.agent = OmniGraphAgent(self.db, self.current_user_id, llm)
+            self.agent = get_anthropic_agent(self.db, self.current_user_id)
+        if self.agent is None:
+            print("Agent is not configured. Please set the ANTHROPIC_API_KEY environment variable.")
+            return
         try:
             result = self.agent.run(question)
             answer = result.get("answer", "")
             print(f"\n  {answer}\n")
             self.access_manager.log_audit(
                 user_id=self.current_user_id,
-                action="agent_query",
+                action="view",
                 resource_type="system",
                 details=f"Agent question: {question[:80]}",
             )
@@ -285,15 +284,11 @@ class OmniGraphConsole:
 
         results = self.query_engine.search(query, strategy="fulltext", limit=10)
 
-        # Enforce document-level access control on search results.
         if self.access_manager:
-            results = [
-                r
-                for r in results
-                if self.access_manager.check_access(
-                    self.current_user_id, "document", r.get("document_id"), "read",
-                )
-            ]
+            allowed = set(self.access_manager.filter_accessible_documents(
+                self.current_user_id, [r["document_id"] for r in results if r.get("document_id")],
+            ))
+            results = [r for r in results if r.get("document_id") in allowed]
 
         if results:
             headers = ["ID", "Title", "Type", "Score", "Author"]
@@ -530,7 +525,11 @@ class OmniGraphConsole:
         )
 
         if doc_id:
-            print(f"\n  ✓ Document created successfully (ID: {doc_id})")
+            print(f"\n  ✓ Document created (ID: {doc_id}). Running entity extraction…")
+            result = self.extractor.process_document(doc_id)
+            print(f"  ✓ Extracted {len(result['entities'])} entities, "
+                  f"{len(result['concepts'])} concepts, "
+                  f"{len(result['relationships'])} relationships.")
             self.access_manager.log_audit(
                 user_id=self.current_user_id,
                 action="create",

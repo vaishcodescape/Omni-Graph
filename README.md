@@ -1,6 +1,6 @@
 # OmniGraph
 
-Enterprise knowledge graph system that ingests organizational documents, extracts entities/concepts/relationships, and supports secure retrieval through full-text, semantic, and graph-based search. An agentic retrieval-augmented generation (RAG) workflow built with LangGraph sits on top of these primitives as the core query interface.
+Enterprise knowledge graph system that ingests organizational documents, extracts entities/concepts/relationships, and supports secure retrieval through full-text, semantic, and graph-based search. An agentic retrieval-augmented generation (RAG) workflow built with Voyage AI Embeddings sits on top of these primitives as the core query interface.
 
 ## Repository Layout
 
