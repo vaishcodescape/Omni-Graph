@@ -228,6 +228,8 @@ class OmniGraphConsole:
             print("  [5] Explore Related Concepts")
             print("  [6] Entity Document Lookup")
             print("  [7] View Entity Neighborhood")
+            print("  [8] Browse/Search Entities")
+            print("  [9] Find Entity Path")
             print("  [0] Back")
             print(THIN_SEP)
 
@@ -247,6 +249,10 @@ class OmniGraphConsole:
                 self._entity_documents()
             elif choice == "7":
                 self._entity_neighborhood()
+            elif choice == "8":
+                self._browse_entities()
+            elif choice == "9":
+                self._entity_path()
             elif choice == "0":
                 break
 
@@ -472,6 +478,9 @@ class OmniGraphConsole:
             print("  [4] View Document Details")
             print("  [5] List Recent Documents")
             print("  [6] Extract Entities from Document")
+            print("  [7] Archive Document")
+            print("  [8] Restore Archived Document")
+            print("  [9] View Document Versions")
             print("  [0] Back")
             print(THIN_SEP)
 
@@ -489,6 +498,12 @@ class OmniGraphConsole:
                 self._list_documents()
             elif choice == "6":
                 self._extract_entities()
+            elif choice == "7":
+                self._archive_document()
+            elif choice == "8":
+                self._restore_document()
+            elif choice == "9":
+                self._view_versions()
             elif choice == "0":
                 break
 
@@ -803,6 +818,10 @@ class OmniGraphConsole:
             print("  [6] Query Analytics")
             print("  [7] User Role Management")
             print("  [8] Run Custom SQL Query")
+            print("  [9] Manage Entities")
+            print("  [10] Manage Relationships")
+            print("  [11] Detect Duplicate Entities")
+            print("  [12] View My Profile & Permissions")
             print("  [0] Back")
             print(THIN_SEP)
 
@@ -824,6 +843,14 @@ class OmniGraphConsole:
                 self._role_management()
             elif choice == "8":
                 self._custom_query()
+            elif choice == "9":
+                self._manage_entities()
+            elif choice == "10":
+                self._manage_relationships()
+            elif choice == "11":
+                self._detect_duplicates()
+            elif choice == "12":
+                self._view_my_profile()
             elif choice == "0":
                 break
 
@@ -1115,6 +1142,437 @@ class OmniGraphConsole:
             except Exception as rollback_exc:
                 logger.error("Rollback after custom SQL query failed: %s", rollback_exc)
                 print("  ⚠ Database connection may be in an invalid state after rollback failure.")
+
+
+    # ------------------------------------------------------------------
+    # Search & Discover — additional handlers
+    # ------------------------------------------------------------------
+
+    def _browse_entities(self):
+        """Search and browse entities in the knowledge graph."""
+        print_header("Browse Entities")
+        search = prompt_str("Search term (blank for all)")
+        print("  Types: person, organization, technology, location,")
+        print("    product, event, standard, other")
+        entity_type = prompt_str("Filter by type (blank for all)")
+        limit = prompt_int("Max results", 20)
+
+        try:
+            conditions = []
+            params: list = []
+            if search:
+                conditions.append("(e.name ILIKE %s OR e.description ILIKE %s)")
+                params.extend([f"%{search}%", f"%{search}%"])
+            if entity_type:
+                conditions.append("e.entity_type = %s")
+                params.append(entity_type)
+            where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+            params.append(limit)
+
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT e.entity_id, e.name, e.entity_type, e.confidence,
+                           LEFT(e.description, 50),
+                           (SELECT COUNT(*) FROM omnigraph.document_entities de
+                            WHERE de.entity_id = e.entity_id) AS doc_count
+                    FROM omnigraph.entities e
+                    {where}
+                    ORDER BY e.name
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = cur.fetchall()
+
+            if rows:
+                headers = ["ID", "Name", "Type", "Confidence", "Description", "Docs"]
+                display = [
+                    [r[0], str(r[1])[:30], r[2], f"{r[3]:.3f}",
+                     str(r[4] or "")[:40], r[5]]
+                    for r in rows
+                ]
+                print_table(headers, display, [6, 32, 16, 12, 42, 6])
+            else:
+                print("  No entities found.")
+        except psycopg2.Error as exc:
+            print(f"  ✗ Error: {exc}")
+
+    def _entity_path(self):
+        """Find shortest path between two entities using sp_shortest_path."""
+        print_header("Find Entity Path")
+        source_id = prompt_int("Source entity ID")
+        target_id = prompt_int("Target entity ID")
+        if source_id is None or target_id is None:
+            return
+        max_depth = prompt_int("Max depth", 6)
+
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM omnigraph.sp_shortest_path(%s, %s, %s)",
+                    (source_id, target_id, max_depth),
+                )
+                rows = cur.fetchall()
+
+            if rows:
+                for i, row in enumerate(rows):
+                    path_len, entities, relations = row[0], row[1], row[2]
+                    print(f"\n  Path {i + 1} (length={path_len}):")
+                    print(f"    Entities:  {' -> '.join(entities)}")
+                    print(f"    Relations: {' -> '.join(relations)}")
+            else:
+                print(f"  No path found between entity #{source_id} and #{target_id}.")
+        except psycopg2.Error as exc:
+            print(f"  ✗ Error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Manage Documents — additional handlers
+    # ------------------------------------------------------------------
+
+    def _archive_document(self):
+        """Archive (soft-delete) a document."""
+        print_header("Archive Document")
+        doc_id = prompt_int("Document ID")
+        if doc_id is None:
+            return
+
+        if not self.access_manager.check_access(
+            self.current_user_id, "document", doc_id, "delete",
+        ):
+            print("  ✗ Access denied. Requires delete permission on this document.")
+            return
+
+        confirm = prompt_str(f"Archive document #{doc_id}? (yes/no)", "no")
+        if confirm.lower() != "yes":
+            print("  Cancelled.")
+            return
+
+        if self.ingester.set_document_archived(doc_id, True):
+            print(f"\n  ✓ Document #{doc_id} archived.")
+            self.access_manager.log_audit(
+                user_id=self.current_user_id, action="delete",
+                resource_type="document", resource_id=doc_id,
+                details=f"Archived document #{doc_id}",
+            )
+        else:
+            print(f"\n  ✗ Failed to archive document #{doc_id}.")
+
+    def _restore_document(self):
+        """Restore an archived document."""
+        print_header("Restore Archived Document")
+        doc_id = prompt_int("Document ID")
+        if doc_id is None:
+            return
+
+        if not self.access_manager.check_access(
+            self.current_user_id, "document", doc_id, "write",
+        ):
+            print("  ✗ Access denied.")
+            return
+
+        if self.ingester.set_document_archived(doc_id, False):
+            print(f"\n  ✓ Document #{doc_id} restored.")
+            self.access_manager.log_audit(
+                user_id=self.current_user_id, action="update",
+                resource_type="document", resource_id=doc_id,
+                details=f"Restored document #{doc_id} from archive",
+            )
+        else:
+            print(f"\n  ✗ Failed to restore document #{doc_id}.")
+
+    def _view_versions(self):
+        """View document version history."""
+        print_header("Document Version History")
+        doc_id = prompt_int("Document ID")
+        if doc_id is None:
+            return
+
+        if not self.access_manager.check_access(
+            self.current_user_id, "document", doc_id, "read",
+        ):
+            print("  ✗ Access denied.")
+            return
+
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT dv.version_id, dv.version_number, dv.change_summary,
+                           u.full_name, dv.created_at::DATE
+                    FROM omnigraph.document_versions dv
+                    JOIN omnigraph.users u ON u.user_id = dv.changed_by
+                    WHERE dv.document_id = %s
+                    ORDER BY dv.version_number DESC
+                    """,
+                    (doc_id,),
+                )
+                rows = cur.fetchall()
+
+            if rows:
+                headers = ["Version ID", "Version #", "Summary", "Changed By", "Date"]
+                display = [
+                    [r[0], r[1], str(r[2] or "")[:40], r[3], str(r[4])]
+                    for r in rows
+                ]
+                print_table(headers, display, [12, 10, 42, 20, 12])
+            else:
+                print(f"  No versions found for document #{doc_id}.")
+        except psycopg2.Error as exc:
+            print(f"  ✗ Error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Administration — additional handlers
+    # ------------------------------------------------------------------
+
+    def _manage_entities(self):
+        """Entity CRUD submenu."""
+        print_header("Manage Entities")
+
+        if not self.access_manager.validate_permission(
+            self.current_user_id, "write",
+        ):
+            print("  ✗ Access denied. Requires 'write' permission.")
+            return
+
+        print("  [1] Create entity")
+        print("  [2] Update entity")
+        print("  [3] Delete entity")
+        choice = prompt_str("Select")
+
+        if choice == "1":
+            name = prompt_str("Entity name")
+            if not name:
+                return
+            print("  Types: person, organization, technology, location,")
+            print("    product, event, standard, other")
+            entity_type = prompt_str("Entity type", "technology")
+            description = prompt_str("Description (optional)")
+
+            eid = self.graph_builder.add_entity_node(
+                name, entity_type, description or None,
+            )
+            if eid:
+                print(f"  ✓ Entity created (ID: {eid}).")
+                self.access_manager.log_audit(
+                    user_id=self.current_user_id, action="create",
+                    resource_type="entity", resource_id=eid,
+                    details=f"Created entity: {name}",
+                )
+            else:
+                print("  ✗ Failed to create entity.")
+
+        elif choice == "2":
+            entity_id = prompt_int("Entity ID")
+            if entity_id is None:
+                return
+            print("  Leave blank to keep current value.")
+            new_name = prompt_str("New name")
+            new_desc = prompt_str("New description")
+            new_conf_str = prompt_str("New confidence (0-1)")
+            new_conf = float(new_conf_str) if new_conf_str else None
+
+            ok = self.graph_builder.update_entity_node(
+                entity_id,
+                name=new_name or None,
+                description=new_desc or None,
+                confidence=new_conf,
+            )
+            if ok:
+                print(f"  ✓ Entity #{entity_id} updated.")
+                self.access_manager.log_audit(
+                    user_id=self.current_user_id, action="update",
+                    resource_type="entity", resource_id=entity_id,
+                    details=f"Updated entity #{entity_id}",
+                )
+            else:
+                print("  ✗ Update failed (not found, no changes, or name conflict).")
+
+        elif choice == "3":
+            entity_id = prompt_int("Entity ID")
+            if entity_id is None:
+                return
+            confirm = prompt_str(
+                f"Delete entity #{entity_id} and all its relationships? (yes/no)", "no",
+            )
+            if confirm.lower() != "yes":
+                print("  Cancelled.")
+                return
+            ok = self.graph_builder.remove_entity_node(entity_id)
+            if ok:
+                print(f"  ✓ Entity #{entity_id} deleted.")
+                self.access_manager.log_audit(
+                    user_id=self.current_user_id, action="delete",
+                    resource_type="entity", resource_id=entity_id,
+                    details=f"Deleted entity #{entity_id}",
+                )
+            else:
+                print("  ✗ Failed to delete entity.")
+
+    def _manage_relationships(self):
+        """Relationship CRUD submenu."""
+        print_header("Manage Relationships")
+
+        if not self.access_manager.validate_permission(
+            self.current_user_id, "write",
+        ):
+            print("  ✗ Access denied. Requires 'write' permission.")
+            return
+
+        print("  [1] Create relationship")
+        print("  [2] Delete relationship")
+        print("  [3] List relationships for entity")
+        choice = prompt_str("Select")
+
+        if choice == "1":
+            source_id = prompt_int("Source entity ID")
+            target_id = prompt_int("Target entity ID")
+            if source_id is None or target_id is None:
+                return
+            print("  Types: works_for, collaborates_with, authored, uses,")
+            print("    located_in, part_of, depends_on, related_to,")
+            print("    manages, developed_by, competitor_of, successor_of")
+            rel_type = prompt_str("Relation type", "related_to")
+            strength_str = prompt_str("Strength (0-1)", "1.0")
+            try:
+                strength = float(strength_str)
+            except ValueError:
+                strength = 1.0
+            description = prompt_str("Description (optional)")
+
+            rid = self.graph_builder.add_relationship(
+                source_id, target_id, rel_type, strength, description or None,
+            )
+            if rid:
+                print(f"  ✓ Relationship created (ID: {rid}).")
+                self.access_manager.log_audit(
+                    user_id=self.current_user_id, action="create",
+                    resource_type="entity", resource_id=source_id,
+                    details=f"Created relationship #{rid}: {rel_type}",
+                )
+            else:
+                print("  ✗ Failed (invalid entities or self-loop).")
+
+        elif choice == "2":
+            rel_id = prompt_int("Relation ID")
+            if rel_id is None:
+                return
+            ok = self.graph_builder.remove_relationship(rel_id)
+            if ok:
+                print(f"  ✓ Relationship #{rel_id} deleted.")
+                self.access_manager.log_audit(
+                    user_id=self.current_user_id, action="delete",
+                    resource_type="entity",
+                    details=f"Deleted relationship #{rel_id}",
+                )
+            else:
+                print("  ✗ Failed to delete relationship.")
+
+        elif choice == "3":
+            entity_id = prompt_int("Entity ID")
+            if entity_id is None:
+                return
+            try:
+                with self.db.conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT r.relation_id, es.name, r.relation_type,
+                               et.name, r.strength
+                        FROM omnigraph.relations r
+                        JOIN omnigraph.entities es
+                            ON es.entity_id = r.source_entity_id
+                        JOIN omnigraph.entities et
+                            ON et.entity_id = r.target_entity_id
+                        WHERE r.source_entity_id = %s
+                           OR r.target_entity_id = %s
+                        ORDER BY r.relation_type
+                        """,
+                        (entity_id, entity_id),
+                    )
+                    rows = cur.fetchall()
+
+                if rows:
+                    headers = ["Rel ID", "Source", "Relation", "Target", "Strength"]
+                    display = [
+                        [r[0], str(r[1])[:25], r[2], str(r[3])[:25], f"{r[4]:.3f}"]
+                        for r in rows
+                    ]
+                    print_table(headers, display, [8, 27, 20, 27, 10])
+                else:
+                    print(f"  No relationships found for entity #{entity_id}.")
+            except psycopg2.Error as exc:
+                print(f"  ✗ Error: {exc}")
+
+    def _detect_duplicates(self):
+        """Find duplicate entity candidates."""
+        print_header("Duplicate Entity Detection")
+
+        if not self.access_manager.validate_permission(
+            self.current_user_id, "view_graph",
+        ):
+            print("  ✗ Access denied. Requires 'view_graph' permission.")
+            return
+
+        duplicates = self.graph_builder.detect_duplicate_nodes()
+
+        if duplicates:
+            headers = ["Entity 1 ID", "Name 1", "Entity 2 ID", "Name 2"]
+            rows = [
+                [d["entity_id_1"], d["name_1"][:30],
+                 d["entity_id_2"], d["name_2"][:30]]
+                for d in duplicates
+            ]
+            print_table(headers, rows, [12, 32, 12, 32])
+            print(f"\n  {len(duplicates)} duplicate pair(s) detected.")
+        else:
+            print("  No duplicate entities detected.")
+
+    def _view_my_profile(self):
+        """View current user's profile, roles, and access matrix."""
+        print_header("My Profile & Permissions")
+
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT user_id, username, email, full_name, department, title
+                    FROM omnigraph.users WHERE user_id = %s
+                    """,
+                    (self.current_user_id,),
+                )
+                user = cur.fetchone()
+
+            if user:
+                print(f"  User ID:    {user[0]}")
+                print(f"  Username:   {user[1]}")
+                print(f"  Email:      {user[2]}")
+                print(f"  Full Name:  {user[3]}")
+                print(f"  Department: {user[4]}")
+                print(f"  Title:      {user[5]}")
+
+            roles = self.access_manager.get_user_roles(self.current_user_id)
+            if roles:
+                print("\n  Roles:")
+                for r in roles:
+                    perms = ", ".join(r["permissions"]) if r["permissions"] else "none"
+                    print(f"    {r['role_name']}: {perms}")
+
+            matrix = self.access_manager.get_user_access_matrix(self.current_user_id)
+            if matrix:
+                print("\n  Access Matrix:")
+                headers = ["Resource", "Sensitivity", "Read", "Write", "Delete"]
+                rows = [
+                    [
+                        m["resource_type"], m["sensitivity_level"],
+                        "yes" if m["can_read"] else "no",
+                        "yes" if m["can_write"] else "no",
+                        "yes" if m["can_delete"] else "no",
+                    ]
+                    for m in matrix
+                ]
+                print_table(headers, rows, [14, 16, 8, 8, 8])
+        except psycopg2.Error as exc:
+            print(f"  ✗ Error: {exc}")
 
 
 if __name__ == "__main__":

@@ -12,10 +12,10 @@ SET search_path TO omnigraph;
 -- ROLES
 -- ============================================================================
 INSERT INTO roles (role_name, description, permissions) VALUES
-    ('admin',       'System administrator with full access',                    ARRAY['read', 'write', 'delete', 'manage_users', 'manage_policies', 'view_audit']),
+    ('admin',       'System administrator with full access',                    ARRAY['read', 'write', 'delete', 'manage_users', 'manage_policies', 'view_audit', 'view_graph']),
     ('contributor',  'Knowledge contributor who uploads and enriches documents', ARRAY['read', 'write', 'tag', 'upload']),
     ('consumer',     'Knowledge consumer who searches and retrieves',           ARRAY['read', 'search']),
-    ('expert',       'Domain expert who manages taxonomy and concepts',         ARRAY['read', 'write', 'manage_taxonomy', 'approve']),
+    ('expert',       'Domain expert who manages taxonomy and concepts',         ARRAY['read', 'write', 'manage_taxonomy', 'approve', 'view_graph']),
     ('compliance',   'Compliance officer who audits access and usage',          ARRAY['read', 'view_audit', 'export_audit']);
 
 -- ============================================================================
