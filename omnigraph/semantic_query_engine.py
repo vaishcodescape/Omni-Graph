@@ -102,12 +102,17 @@ class SemanticQueryEngine:
                 return results
         except psycopg2.Error as exc:
             logger.error("Full-text search failed: %s", exc)
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
             return []
 
-    def vector_similarity_search(self, query: str, limit: int = 10) -> List[Dict]:
-        query_vector = self._generate_query_embedding(query)
-        query_str = "[" + ",".join(str(v) for v in query_vector) + "]"
+    def vector_similarity_search(self, query: str, limit: int = 10,
+                                 sensitivity_filter: Optional[List[str]] = None) -> List[Dict]:
         try:
+            query_vector = self._generate_query_embedding(query)
+            query_str = "[" + ",".join(str(v) for v in query_vector) + "]"
             with self.db.conn.cursor() as cur:
                 cur.execute(
                     """
@@ -134,8 +139,15 @@ class SemanticQueryEngine:
                     r["score"] = float(r["score"]) if r["score"] else 0.0
                     results.append(r)
                 return results
+        except (ImportError, EnvironmentError) as exc:
+            logger.warning("Semantic search unavailable: %s", exc)
+            return []
         except psycopg2.Error as exc:
             logger.error("Vector similarity search failed: %s", exc)
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
             return []
 
     def graph_traverse(
@@ -366,6 +378,7 @@ class SemanticQueryEngine:
         limit: int,
         sensitivity_filter: Optional[List[str]] = None,
     ) -> List[Dict]:
+        
         # Fetch extra candidates before ranking.
         per_source_limit = max(limit * 3, limit)
         per_source_limit = min(per_source_limit, 50)

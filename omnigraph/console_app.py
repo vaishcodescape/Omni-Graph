@@ -1,15 +1,28 @@
 import logging
+import os
 import re
+import sys
 from getpass import getpass
+from pathlib import Path
 from typing import Dict, List, Optional
+
+from dotenv import find_dotenv, load_dotenv  # type: ignore[import-untyped]
 
 import psycopg2  # type: ignore[import-untyped]
 
-from .access_control_audit import AccessControlManager
-from .agentic_rag import get_anthropic_agent
-from .graph_builder import KnowledgeGraphBuilder
-from .ingestion_pipeline import DatabaseConnection
-from .semantic_query_engine import SemanticQueryEngine
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if __package__ in {None, ""} and str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from omnigraph.access_control_audit import AccessControlManager
+from omnigraph.agentic_rag import get_anthropic_agent
+from omnigraph.graph_builder import KnowledgeGraphBuilder
+from omnigraph.ingestion_pipeline import DatabaseConnection
+from omnigraph.semantic_query_engine import SemanticQueryEngine
+
+_PROJECT_ENV = _PROJECT_ROOT / ".env"
+load_dotenv(_PROJECT_ENV)
+load_dotenv(find_dotenv(usecwd=True))
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -189,7 +202,7 @@ class OmniGraphConsole:
         host = prompt_str("Database host", "localhost")
         port = prompt_int("Database port", 5432)
         dbname = prompt_str("Database name", "omnigraph")
-        db_user = prompt_str("Database user", "postgres")
+        db_user = prompt_str("Database user", os.getenv("OMNIGRAPH_DB_USER", "postgres"))
         try:
             db_pass = getpass("  Database password (leave blank for env): ") or None
         except (EOFError, KeyboardInterrupt):
@@ -288,8 +301,7 @@ class OmniGraphConsole:
 
         self._audit("search", "document", details=f"Graph search: {query[:80]}")
 
-    # ── 2. Agent Prompt ───────────────────────────────────────────────────
-
+    # Agent Prompt 
     def _agent_prompt(self) -> None:
         print_header("Agent Prompt")
         print(f"  {DIM}Ask the AI agent anything about your knowledge graph.{RESET}")
