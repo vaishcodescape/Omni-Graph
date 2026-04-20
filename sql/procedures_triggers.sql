@@ -178,7 +178,7 @@ $$ LANGUAGE plpgsql;
 -- Finds the shortest relationship path between two entities using BFS
 -- via recursive CTE. Returns the path as an array of entity names.
 -- ============================================================================
-CREATE OR REPLACE FUNCTION sp_shortest_path(
+CREATE OR REPLACE FUNCTION omnigraph.sp_shortest_path(
     p_source_entity_id INTEGER,
     p_target_entity_id INTEGER,
     p_max_depth INTEGER DEFAULT 6
@@ -195,11 +195,11 @@ BEGIN
         SELECT
             r.target_entity_id AS current_id,
             1 AS depth,
-            ARRAY[es.name, et.name] AS entities,
-            ARRAY[r.relation_type] AS relations
-        FROM relations r
-        JOIN entities es ON es.entity_id = r.source_entity_id
-        JOIN entities et ON et.entity_id = r.target_entity_id
+            ARRAY[es.name, et.name]::TEXT[] AS entities,
+            ARRAY[r.relation_type]::TEXT[] AS relations
+        FROM omnigraph.relations r
+        JOIN omnigraph.entities es ON es.entity_id = r.source_entity_id
+        JOIN omnigraph.entities et ON et.entity_id = r.target_entity_id
         WHERE r.source_entity_id = p_source_entity_id
 
         UNION ALL
@@ -208,11 +208,11 @@ BEGIN
         SELECT
             r.target_entity_id,
             ep.depth + 1,
-            ep.entities || et.name,
-            ep.relations || r.relation_type
+            ep.entities || et.name::TEXT,
+            ep.relations || r.relation_type::TEXT
         FROM entity_path ep
-        JOIN relations r ON r.source_entity_id = ep.current_id
-        JOIN entities et ON et.entity_id = r.target_entity_id
+        JOIN omnigraph.relations r ON r.source_entity_id = ep.current_id
+        JOIN omnigraph.entities et ON et.entity_id = r.target_entity_id
         WHERE ep.depth < p_max_depth
           AND NOT (et.name = ANY(ep.entities))  -- Prevent cycles
     )

@@ -378,12 +378,17 @@ class OmniGraphConsole:
             return
         max_depth = prompt_int("Max depth", 6)
 
-        with self.db.conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM omnigraph.sp_shortest_path(%s, %s, %s)",
-                (source_id, target_id, max_depth),
-            )
-            rows = cur.fetchall()
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM omnigraph.sp_shortest_path(%s, %s, %s)",
+                    (source_id, target_id, max_depth),
+                )
+                rows = cur.fetchall()
+        except psycopg2.Error as exc:
+            self.db.conn.rollback()
+            print(f"\n  {YELLOW}Path lookup failed: {exc}{RESET}")
+            return
 
         if not rows:
             print(f"\n  {YELLOW}No path found between entity #{source_id} and #{target_id}.{RESET}")
