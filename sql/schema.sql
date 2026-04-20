@@ -10,8 +10,8 @@
 --   - Indexes for query performance
 -- ============================================================================
 
--- Enable pgvector for 1024-dim Voyage AI embeddings
-CREATE EXTENSION IF NOT EXISTS vector;
+-- pgvector is optional; embeddings are stored as FLOAT[] when the extension is unavailable.
+-- CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Drop existing database objects if they exist
 DROP SCHEMA IF EXISTS omnigraph CASCADE;
@@ -310,15 +310,15 @@ CREATE TABLE embeddings (
     source_type     VARCHAR(30)     NOT NULL CHECK (source_type IN ('document', 'entity', 'concept')),
     source_id       INTEGER         NOT NULL,
     model_name      VARCHAR(100)    NOT NULL DEFAULT 'voyage-3',
-    vector          vector(1024)    NOT NULL,
+    vector          FLOAT[]         NOT NULL,
     dimensions      INTEGER         NOT NULL DEFAULT 1024 CHECK (dimensions > 0),
     created_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_type, source_id, model_name)
 );
 
--- HNSW index for fast approximate cosine similarity search (<=> operator)
-CREATE INDEX idx_embeddings_hnsw ON embeddings USING hnsw (vector vector_cosine_ops);
+-- GIN index on the FLOAT[] vector column (pgvector HNSW unavailable)
+CREATE INDEX idx_embeddings_vector ON embeddings USING gin (vector);
 
 -- ============================================================================
 -- 18. QUERY_LOGS

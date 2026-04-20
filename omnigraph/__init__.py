@@ -1,5 +1,3 @@
-"""OmniGraph: ingestion, extraction, graph building, semantic query, access control, agentic RAG."""
-
 from omnigraph.ingestion_pipeline import DatabaseConnection, DocumentIngester
 from omnigraph.entity_relation_extractor import EntityRelationExtractor
 from omnigraph.graph_builder import KnowledgeGraphBuilder

@@ -1,5 +1,3 @@
-"""Pattern-based NER and relation extraction from text (regex + keyword dicts)."""
-
 import logging
 import re
 from typing import Dict, List, Optional, Set
@@ -65,20 +63,13 @@ PERSON_PATTERN = re.compile(
 )
 
 
+# Regex and keyword-based entity, concept, and relationship extraction.
 class EntityRelationExtractor:
-    """Extracts entities, concepts, and relationships from text.
-
-    Persistence methods (_store_entities/_store_concepts/_store_relationships)
-    each execute in their own transaction (commit or rollback). The high-level
-    process_document() call is therefore best-effort: a failure in one stage
-    does not automatically roll back others.
-    """
 
     def __init__(self, db_connection):
         self.db = db_connection
 
     def extract_entities(self, text: str) -> List[Dict]:
-        """Named entities via keyword match + person pattern."""
         entities = []
         entities.extend(self._match_keywords(text, TECHNOLOGY_KEYWORDS, "technology"))
         entities.extend(self._match_keywords(text, ORGANIZATION_KEYWORDS, "organization"))
@@ -88,7 +79,6 @@ class EntityRelationExtractor:
         return entities
 
     def extract_concepts(self, text: str) -> List[Dict]:
-        """Domain concepts from CONCEPT_DOMAINS; returns list of {name, domain, relevance_score, mention_count}."""
         text_lower = text.lower()
         concepts = []
         for concept, domain in CONCEPT_DOMAINS.items():
@@ -106,7 +96,6 @@ class EntityRelationExtractor:
         return concepts
 
     def extract_relationships(self, text: str, entities: List[Dict]) -> List[Dict]:
-        """Typed relationships between entities; deduplicated."""
         entity_names = {e["name"] for e in entities}
         relationships = []
 
@@ -135,7 +124,6 @@ class EntityRelationExtractor:
         return unique
 
     def process_document(self, document_id: int) -> Dict:
-        """Full pipeline: fetch doc, extract entities/concepts/relationships, persist."""
         with self.db.conn.cursor() as cur:
             cur.execute(
                 "SELECT content FROM omnigraph.documents WHERE document_id = %s",
@@ -166,7 +154,6 @@ class EntityRelationExtractor:
         }
 
     def _store_entities(self, entities: List[Dict], document_id: int) -> None:
-        """Upsert entities and link to document; batch link insert."""
         if not entities:
             return
         entity_ids = []
@@ -211,7 +198,6 @@ class EntityRelationExtractor:
             self.db.conn.rollback()
 
     def _store_concepts(self, concepts: List[Dict], document_id: int) -> None:
-        """Upsert concepts and link to document."""
         with self.db.conn.cursor() as cur:
             for concept in concepts:
                 try:
@@ -253,7 +239,6 @@ class EntityRelationExtractor:
     def _store_relationships(
         self, relationships: List[Dict], document_id: int,
     ) -> None:
-        """Resolve entity names to IDs and insert relations."""
         if not relationships:
             return
         name_to_id: Dict[str, int] = {}
@@ -300,26 +285,18 @@ class EntityRelationExtractor:
     def _match_keywords(
         text: str, keywords: Set[str], entity_type: str,
     ) -> List[Dict]:
-        """Match keyword-based entities in text (single pass over text).
-
-        Builds a combined regex for all keywords to avoid compiling and
-        scanning once per keyword, which is costly on large documents.
-        """
         if not text or not keywords:
             return []
 
-        # Build alternation with longest keywords first to prefer specific matches.
         sorted_keywords = sorted(keywords, key=len, reverse=True)
         pattern = re.compile(
             "|".join(re.escape(k) for k in sorted_keywords),
             re.IGNORECASE,
         )
 
-        # Aggregate matches per canonical keyword.
         match_positions: Dict[str, List[int]] = {}
         for m in pattern.finditer(text):
             matched_text = m.group(0)
-            # Canonicalize to the configured keyword casing if possible.
             canonical = next(
                 (k for k in keywords if k.lower() == matched_text.lower()),
                 matched_text,
@@ -341,7 +318,6 @@ class EntityRelationExtractor:
 
     @staticmethod
     def _extract_persons(text: str) -> List[Dict]:
-        """Person names via title + name pattern."""
         persons = []
         seen = {}
         for match in PERSON_PATTERN.finditer(text):
@@ -362,12 +338,10 @@ class EntityRelationExtractor:
 
     @staticmethod
     def _fuzzy_match(candidate: str, known_names: Set[str]) -> Optional[str]:
-        """Case-insensitive match; fallback to partial match."""
         candidate_lower = candidate.lower().strip()
         if not candidate_lower or not known_names:
             return None
 
-        # Precompute lower-cased mapping once per call for efficiency.
         lower_map = {name.lower(): name for name in known_names}
         if candidate_lower in lower_map:
             return lower_map[candidate_lower]
@@ -379,7 +353,6 @@ class EntityRelationExtractor:
 
     @staticmethod
     def classify_entity(name: str) -> str:
-        """Classify entity name into technology, organization, standard, or other."""
         if name in TECHNOLOGY_KEYWORDS:
             return "technology"
         if name in ORGANIZATION_KEYWORDS:

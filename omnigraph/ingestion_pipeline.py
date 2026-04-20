@@ -1,5 +1,3 @@
-"""Document ingestion: batch processing, normalization, dedup, chunking, versioning."""
-
 import hashlib
 import logging
 import mimetypes
@@ -15,13 +13,6 @@ logger = logging.getLogger("omnigraph.ingestion")
 
 
 def store_embedding(db: "DatabaseConnection", source_id: int, source_type: str, text: str) -> None:
-    """Generate and upsert a Voyage AI embedding for any source type.
-
-    Matches the schema's UNIQUE (source_type, source_id, model_name) constraint and
-    supplies the required ``dimensions`` column. Requires the ``vector`` column to be
-    type ``vector(1024)`` — run ``migrations/002_pgvector_embeddings.sql`` first.
-    Never raises; failures are logged as warnings.
-    """
     try:
         vector = generate_embedding(text)
         vector_str = "[" + ",".join(str(v) for v in vector) + "]"
@@ -56,13 +47,8 @@ DEFAULT_CHUNK_SIZE = 2000
 DEFAULT_CHUNK_OVERLAP = 200
 
 
+# PostgreSQL connection using OMNIGRAPH_DB_USER/PASSWORD when set.
 class DatabaseConnection:
-    """PostgreSQL connection lifecycle.
-
-    Uses environment variables when explicit credentials are not provided:
-    OMNIGRAPH_DB_USER and OMNIGRAPH_DB_PASSWORD (with 'postgres' fallbacks
-    for local development).
-    """
 
     def __init__(
         self,
@@ -85,7 +71,6 @@ class DatabaseConnection:
         self._conn = None
 
     def connect(self):
-        """Establish database connection."""
         try:
             self._conn = psycopg2.connect(**self.connection_params)
             self._conn.autocommit = False
@@ -95,28 +80,19 @@ class DatabaseConnection:
             raise
 
     def disconnect(self):
-        """Close database connection."""
         if self._conn and not self._conn.closed:
             self._conn.close()
             logger.info("Database connection closed.")
 
     @property
     def conn(self):
-        """Active connection; reconnects if closed."""
         if self._conn is None or self._conn.closed:
             self.connect()
         return self._conn
 
 
+# Handles document ingest, deduplication, chunking, and versioning.
 class DocumentIngester:
-    """Ingests documents: normalize, dedup by hash, chunk, version.
-
-    Each public method (ingest_document, ingest_batch, create_version) manages
-    its own transaction boundary: on success it commits, and on failure it
-    rolls back only its own work. Callers should treat these operations as
-    atomic per-document/per-version, not as part of a larger external
-    transaction.
-    """
 
     def __init__(self, db: DatabaseConnection):
         self.db = db
@@ -133,7 +109,6 @@ class DocumentIngester:
         mime_type: Optional[str] = None,
         summary: Optional[str] = None,
     ) -> Optional[int]:
-        """Ingest one document; returns document_id or None."""
         self._validate_source_type(source_type)
         self._validate_sensitivity(sensitivity_level)
 
@@ -178,7 +153,6 @@ class DocumentIngester:
             return None
 
     def ingest_batch(self, documents: List[Dict]) -> Tuple[int, int]:
-        """Ingest multiple documents. Returns (success_count, failure_count)."""
         success = failure = 0
         logger.info("Starting batch ingestion of %d documents.", len(documents))
 
@@ -208,7 +182,6 @@ class DocumentIngester:
 
     @staticmethod
     def normalize_text(text: str) -> str:
-        """Strip, collapse whitespace, remove control chars."""
         if not text:
             return ""
         text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
@@ -222,7 +195,6 @@ class DocumentIngester:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         overlap: int = DEFAULT_CHUNK_OVERLAP,
     ) -> List[Dict]:
-        """Split content into overlapping chunks. Each dict: chunk_index, start_pos, end_pos, text."""
         chunks = []
         start = index = 0
         while start < len(content):
@@ -247,7 +219,6 @@ class DocumentIngester:
         changed_by: int,
         change_summary: Optional[str] = None,
     ) -> Optional[int]:
-        """Create new version for existing document; returns version_id or None."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -284,7 +255,6 @@ class DocumentIngester:
 
     @staticmethod
     def extract_metadata(file_path: str) -> Dict:
-        """Basic metadata from path: filename, extension, size_bytes, mime_type."""
         filename = os.path.basename(file_path)
         extension = os.path.splitext(filename)[1].lower()
         mime_guess, _ = mimetypes.guess_type(file_path)
@@ -301,7 +271,6 @@ class DocumentIngester:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def _find_duplicate(self, content_hash: str) -> Optional[int]:
-        """Return document_id if same content_hash exists, else None."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -338,7 +307,6 @@ class DocumentIngester:
         content: Optional[str] = None,
         change_summary: Optional[str] = None,
     ) -> Optional[int]:
-        """Update document fields; if content changes, append document_versions row. Returns document_id or None."""
         if all(v is None for v in (title, summary, sensitivity_level, content)):
             logger.warning("update_document: no fields to update for document_id=%s", document_id)
             return None
@@ -425,15 +393,9 @@ class DocumentIngester:
             return None
 
     def _store_embedding(self, document_id: int, text: str) -> None:
-        """Generate and upsert document embedding. Never raises."""
         store_embedding(self.db, document_id, "document", text)
 
     def reembed_all_documents(self) -> Tuple[int, int]:
-        """Delete all existing embeddings and regenerate them using Voyage AI.
-
-        Fetches every non-archived document, clears the embeddings table, then
-        re-embeds each document one by one. Returns (success_count, failure_count).
-        """
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute("DELETE FROM omnigraph.embeddings WHERE source_type = 'document'")
@@ -469,7 +431,6 @@ class DocumentIngester:
         return success, failure
 
     def set_document_archived(self, document_id: int, archived: bool) -> bool:
-        """Set is_archived; returns True on success."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(

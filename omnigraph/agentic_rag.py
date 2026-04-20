@@ -1,5 +1,3 @@
-"""Agentic RAG: Anthropic SDK-powered agent with OmniGraph tools."""
-
 from __future__ import annotations
 
 import os
@@ -48,7 +46,6 @@ def _format_docs(docs: List[Dict[str, Any]], max_chars: int = 4000) -> str:
 
 
 class _OmniTool(NamedTuple):
-    """Pairs an Anthropic tool schema with its implementation function."""
     schema: Dict[str, Any]
     fn: Callable
 
@@ -545,7 +542,6 @@ def _create_tools(
 
 
 class AnthropicOmniGraphAgent:
-    """OmniGraph agent driven by the Anthropic SDK (native tool-use loop, streaming)."""
 
     _SYSTEM = """\
 You are OmniGraph Assistant, an AI that answers questions from an enterprise knowledge graph.
@@ -581,7 +577,6 @@ You are OmniGraph Assistant, an AI that answers questions from an enterprise kno
         self._anthropic_tools: List[Dict[str, Any]] = [t.schema for t in tools]
 
     def run(self, question: str) -> Dict[str, Any]:
-        """Run the agentic tool loop and return {"answer": str, "messages": list}."""
         messages: List[Dict[str, Any]] = [{"role": "user", "content": question}]
 
         while True:
@@ -595,7 +590,6 @@ You are OmniGraph Assistant, an AI that answers questions from an enterprise kno
             ) as stream:
                 response = stream.get_final_message()
 
-            # Preserve full content (including thinking blocks) for subsequent turns.
             messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "end_turn":
@@ -627,12 +621,12 @@ You are OmniGraph Assistant, an AI that answers questions from an enterprise kno
         return {"answer": answer, "messages": messages}
 
 
+ 
 def get_anthropic_agent(
     db: DatabaseConnection,
     user_id: int,
     model: str = "claude-opus-4-6",
 ) -> Optional[AnthropicOmniGraphAgent]:
-    """Return an AnthropicOmniGraphAgent when ANTHROPIC_API_KEY is set; otherwise None."""
     if not os.getenv("ANTHROPIC_API_KEY"):
         return None
     return AnthropicOmniGraphAgent(db, user_id, model=model)

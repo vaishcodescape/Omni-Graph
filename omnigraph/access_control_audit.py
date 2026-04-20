@@ -1,15 +1,13 @@
-"""Role Based Access Control (RBAC), permission checks, sensitivity-based access, audit logging and reporting."""
-
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-import psycopg2   
+import psycopg2
 logger = logging.getLogger("omnigraph.access_control")
 
 
+# Role checks, sensitivity-based access, and audit reporting.
 class AccessControlManager:
-    """Role-based access control, permission validation, audit logging."""
 
     def __init__(self, db_connection):
         self.db = db_connection
@@ -22,7 +20,6 @@ class AccessControlManager:
         action: str = "read",
     ) -> bool:
 
-        """Check permission for action on resource; log attempt. Returns True if granted."""
         sensitivity = self._get_resource_sensitivity(resource_type, resource_id)
         if sensitivity is None:
             logger.warning("Resource not found: %s #%d", resource_type, resource_id)
@@ -60,7 +57,6 @@ class AccessControlManager:
         sensitivity_level: str,
         action: str = "write",
     ) -> bool:
-        """True if any role allows action on resource_type at this sensitivity (e.g. new document at tier)."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -86,7 +82,6 @@ class AccessControlManager:
             return False
 
     def validate_permission(self, user_id: int, required_permission: str) -> bool:
-        """True if user has required_permission via any role."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -107,7 +102,6 @@ class AccessControlManager:
             return False
 
     def get_user_roles(self, user_id: int) -> List[Dict]:
-        """All roles for user."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -126,7 +120,6 @@ class AccessControlManager:
             return []
 
     def get_user_access_matrix(self, user_id: int) -> List[Dict]:
-        """Access matrix: resource_type, sensitivity_level, can_read, can_write, can_delete."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -157,7 +150,6 @@ class AccessControlManager:
         results_count: int = 0,
         execution_ms: int = 0,
     ) -> Optional[int]:
-        """Log query to query_logs; returns log_id or None."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -186,7 +178,6 @@ class AccessControlManager:
         details: Optional[str] = None,
         ip_address: Optional[str] = None,
     ) -> Optional[int]:
-        """Append audit log entry; returns audit_id or None."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -214,7 +205,6 @@ class AccessControlManager:
         days: int = 30,
         limit: int = 50,
     ) -> List[Dict]:
-        """Filtered audit log entries (timestamp, user, action, resource_type, etc.)."""
         try:
             conditions = ["al.created_at >= %s"]
             params: list = [datetime.now() - timedelta(days=days)]
@@ -251,7 +241,6 @@ class AccessControlManager:
             return []
 
     def get_sensitive_access_report(self, days: int = 30) -> List[Dict]:
-        """Access to confidential/restricted documents in the period."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -282,7 +271,6 @@ class AccessControlManager:
             return []
 
     def get_query_analytics(self, days: int = 30) -> Dict:
-        """Query counts by type and top users in the period."""
         try:
             since = datetime.now() - timedelta(days=days)
             with self.db.conn.cursor() as cur:
@@ -326,7 +314,6 @@ class AccessControlManager:
             return {}
 
     def assign_role(self, user_id: int, role_id: int, assigned_by: int) -> bool:
-        """Assign role to user; log audit."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -349,7 +336,6 @@ class AccessControlManager:
             return False
 
     def revoke_role(self, user_id: int, role_id: int, revoked_by: int) -> bool:
-        """Revoke role from user; log audit."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -370,10 +356,6 @@ class AccessControlManager:
     def filter_accessible_documents(
         self, user_id: int, doc_ids: List[int], action: str = "read",
     ) -> List[int]:
-        """Return the subset of doc_ids the user may access — 2 queries instead of 2×N.
-
-        Replaces per-document check_access() loops in search result filtering.
-        """
         if not doc_ids:
             return []
         try:
@@ -407,7 +389,6 @@ class AccessControlManager:
             return []
 
     def _get_resource_sensitivity(self, resource_type: str, resource_id: int) -> Optional[str]:
-        """Sensitivity level for resource; None if not found."""
         if resource_type != "document":
             return "public"
         try:
@@ -425,7 +406,6 @@ class AccessControlManager:
     def _evaluate_policies(
         self, user_id: int, resource_type: str, sensitivity: str, action: str,
     ) -> bool:
-        """True if any of user's roles allows action on (resource_type, sensitivity)."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(

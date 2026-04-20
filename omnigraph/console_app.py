@@ -1,5 +1,3 @@
-"""Interactive console: search, document management, admin, audit (prepared statements)."""
-
 import logging
 import time
 from getpass import getpass
@@ -25,19 +23,16 @@ THIN_SEP = "─" * 70
 
 
 def clear_screen():
-    """Print enough newlines to simulate a screen clear."""
     print("\n" * 2)
 
 
 def print_header(title: str):
-    """Print a formatted section header."""
     print(f"\n{SEPARATOR}")
     print(f"  {title}")
     print(SEPARATOR)
 
 
 def print_table(headers: list, rows: list, widths: Optional[list] = None):
-    """Print ASCII table; widths auto-computed if None."""
     if not rows:
         print("  (No results)")
         return
@@ -51,14 +46,12 @@ def print_table(headers: list, rows: list, widths: Optional[list] = None):
             )
             widths.append(min(col_max + 2, 50))
 
-    # Header
     header_line = "  ".join(
         str(h).ljust(w) for h, w in zip(headers, widths)
     )
     print(f"  {header_line}")
     print(f"  {'  '.join('─' * w for w in widths)}")
 
-    # Rows
     for row in rows:
         row_line = "  ".join(
             str(row[i] if i < len(row) else "").ljust(w)[:w]
@@ -68,7 +61,6 @@ def print_table(headers: list, rows: list, widths: Optional[list] = None):
 
 
 def prompt_int(message: str, default: Optional[int] = None) -> Optional[int]:
-    """Prompt user for an integer input."""
     suffix = f" [{default}]" if default is not None else ""
     try:
         val = input(f"  {message}{suffix}: ").strip()
@@ -80,7 +72,6 @@ def prompt_int(message: str, default: Optional[int] = None) -> Optional[int]:
 
 
 def prompt_str(message: str, default: str = "") -> str:
-    """Prompt user for a string input."""
     suffix = f" [{default}]" if default else ""
     try:
         val = input(f"  {message}{suffix}: ").strip()
@@ -89,8 +80,8 @@ def prompt_str(message: str, default: str = "") -> str:
         return default
 
 
+# Menu-driven console for search, documents, admin, and audit.
 class OmniGraphConsole:
-    """Menu-driven console: search, document management, admin and audit."""
 
     def __init__(self):
         self.db = None
@@ -111,7 +102,6 @@ class OmniGraphConsole:
         user: str = "postgres",
         password: str = "postgres",
     ):
-        """Connect to DB and init ingester, extractor, graph builder, query engine, access manager."""
         self.db = DatabaseConnection(host, port, dbname, user, password)
         self.db.connect()
         self.ingester = DocumentIngester(self.db)
@@ -120,7 +110,6 @@ class OmniGraphConsole:
         self.access_manager = AccessControlManager(self.db)
 
     def authenticate(self) -> bool:
-        """Simple authentication against the users table."""
         print_header("OmniGraph — Login")
         username = prompt_str("Username")
         if not username:
@@ -151,11 +140,9 @@ class OmniGraphConsole:
         return False
 
     def run(self):
-        """Main application loop."""
         print_header("OmniGraph — Enterprise Knowledge Graph")
         print("  An AI-powered knowledge intelligence system\n")
 
-        # Connection setup
         host = prompt_str("Database host", "localhost")
         port = prompt_int("Database port", 5432)
         dbname = prompt_str("Database name", "omnigraph")
@@ -172,12 +159,10 @@ class OmniGraphConsole:
             print(f"\n  ✗ Connection failed: {exc}")
             return
 
-        # Authenticate
         if not self.authenticate():
             print("  Exiting.\n")
             return
 
-        # Main menu loop
         while True:
             self._print_main_menu()
             choice = prompt_str("Select option")
@@ -203,7 +188,6 @@ class OmniGraphConsole:
         self.db.disconnect()
 
     def _print_main_menu(self):
-        """Display main menu."""
         print(f"\n{THIN_SEP}")
         print(f"  Logged in as: {self.current_username}")
         print(THIN_SEP)
@@ -213,12 +197,7 @@ class OmniGraphConsole:
         print("  [0] Exit")
         print(THIN_SEP)
 
-    # ------------------------------------------------------------------
-    # 1. Search & Discover Menu
-    # ------------------------------------------------------------------
-
     def _search_menu(self):
-        """Search and discovery sub-menu."""
         while True:
             print_header("Search & Discover")
             print("  [1] Ask (Agent) — natural-language question over the knowledge graph")
@@ -257,7 +236,6 @@ class OmniGraphConsole:
                 break
 
     def _ask_agent(self):
-        """Run the agentic RAG agent on a natural-language question."""
         print_header("Ask (Agent)")
         question = prompt_str("Your question")
         if not question:
@@ -282,7 +260,6 @@ class OmniGraphConsole:
             print(f"  Agent error: {exc}")
 
     def _fulltext_search(self):
-        """Execute full-text search."""
         print_header("Full-Text Search")
         query = prompt_str("Search query")
         if not query:
@@ -313,7 +290,6 @@ class OmniGraphConsole:
             print("  No results found.")
 
     def _hybrid_search(self):
-        """Execute hybrid (fulltext + semantic + graph) search."""
         print_header("Hybrid Search")
         query = prompt_str("Search query")
         if not query:
@@ -321,7 +297,6 @@ class OmniGraphConsole:
 
         results = self.query_engine.search(query, strategy="hybrid", limit=10)
 
-        # Enforce document-level access control on search results.
         if self.access_manager:
             results = [
                 r
@@ -348,7 +323,6 @@ class OmniGraphConsole:
             print("  No results found.")
 
     def _find_experts(self):
-        """Find domain experts by concept."""
         print_header("Find Domain Experts")
         concept = prompt_str("Concept name (e.g., Deep Learning)")
         if not concept:
@@ -373,7 +347,6 @@ class OmniGraphConsole:
             print(f"  No experts found for '{concept}'.")
 
     def _related_concepts(self):
-        """Explore concepts related to a given concept."""
         print_header("Related Concepts")
         concept = prompt_str("Concept name (e.g., Machine Learning)")
         if not concept:
@@ -397,7 +370,6 @@ class OmniGraphConsole:
             print(f"  No related concepts found for '{concept}'.")
 
     def _entity_documents(self):
-        """Retrieve documents linked to an entity."""
         print_header("Entity Document Lookup")
         entity = prompt_str("Entity name (e.g., Kubernetes)")
         if not entity:
@@ -405,7 +377,6 @@ class OmniGraphConsole:
 
         docs = self.query_engine.get_entity_documents(entity)
 
-        # Enforce document-level access control on lookup results.
         if self.access_manager:
             docs = [
                 d
@@ -432,7 +403,6 @@ class OmniGraphConsole:
             print(f"  No documents found for entity '{entity}'.")
 
     def _entity_neighborhood(self):
-        """View entity neighborhood graph."""
         print_header("Entity Neighborhood")
         if not self.access_manager.validate_permission(
             self.current_user_id, "view_graph",
@@ -464,12 +434,7 @@ class OmniGraphConsole:
         else:
             print(f"  No neighbors found for entity #{entity_id}.")
 
-    # ------------------------------------------------------------------
-    # 2. Manage Documents Menu
-    # ------------------------------------------------------------------
-
     def _manage_menu(self):
-        """Document management sub-menu."""
         while True:
             print_header("Manage Documents")
             print("  [1] Add New Document")
@@ -508,7 +473,6 @@ class OmniGraphConsole:
                 break
 
     def _add_document(self):
-        """Add a new document (INSERT with prepared statement)."""
         print_header("Add New Document")
 
         title = prompt_str("Title")
@@ -556,14 +520,12 @@ class OmniGraphConsole:
             print("\n  ✗ Failed to create document.")
 
     def _update_document(self):
-        """Update document metadata (UPDATE with prepared statement)."""
         print_header("Update Document Metadata")
 
         doc_id = prompt_int("Document ID")
         if doc_id is None:
             return
 
-        # Check access
         if not self.access_manager.check_access(
             self.current_user_id, "document", doc_id, "write",
         ):
@@ -575,7 +537,6 @@ class OmniGraphConsole:
         new_summary = prompt_str("New summary")
         new_sensitivity = prompt_str("New sensitivity level")
 
-        # Build UPDATE dynamically using prepared statement
         updates = []
         params = []
         if new_title:
@@ -619,7 +580,6 @@ class OmniGraphConsole:
             print(f"\n  ✗ Update failed: {exc}")
 
     def _tag_document(self):
-        """Add a tag to a document."""
         print_header("Tag a Document")
 
         doc_id = prompt_int("Document ID")
@@ -663,14 +623,12 @@ class OmniGraphConsole:
             print(f"\n  ✗ Tagging failed: {exc}")
 
     def _view_document(self):
-        """View detailed document information (SELECT with prepared statement)."""
         print_header("Document Details")
 
         doc_id = prompt_int("Document ID")
         if doc_id is None:
             return
 
-        # Check access before loading potentially sensitive content.
         if not self.access_manager.check_access(
             self.current_user_id, "document", doc_id, "read",
         ):
@@ -740,7 +698,6 @@ class OmniGraphConsole:
             print(f"  ✗ Error: {exc}")
 
     def _list_documents(self):
-        """List recent documents."""
         print_header("Recent Documents")
         limit = prompt_int("Number of documents", 15)
 
@@ -760,7 +717,6 @@ class OmniGraphConsole:
                 )
                 rows = cur.fetchall()
 
-            # Apply access control per document.
             allowed_rows = []
             for r in rows:
                 if self.access_manager and not self.access_manager.check_access(
@@ -775,14 +731,12 @@ class OmniGraphConsole:
             print(f"  ✗ Error: {exc}")
 
     def _extract_entities(self):
-        """Run entity extraction on a document."""
         print_header("Entity Extraction")
 
         doc_id = prompt_int("Document ID")
         if doc_id is None:
             return
 
-        # Require read access to the document before processing it.
         if not self.access_manager.check_access(
             self.current_user_id, "document", doc_id, "read",
         ):
@@ -802,12 +756,7 @@ class OmniGraphConsole:
                 print(f"    [{e['entity_type']}] {e['name']} "
                       f"(confidence={e['confidence']})")
 
-    # ------------------------------------------------------------------
-    # 3. Administration & Audit Menu
-    # ------------------------------------------------------------------
-
     def _admin_menu(self):
-        """Administration and audit sub-menu."""
         while True:
             print_header("Administration & Audit")
             print("  [1] View Graph Statistics")
@@ -855,7 +804,6 @@ class OmniGraphConsole:
                 break
 
     def _graph_stats(self):
-        """Display knowledge graph statistics."""
         print_header("Knowledge Graph Statistics")
 
         if not self.access_manager.validate_permission(
@@ -885,7 +833,6 @@ class OmniGraphConsole:
                 print(f"    {rtype}: {count}")
 
     def _taxonomy_tree(self):
-        """Display taxonomy hierarchy."""
         print_header("Taxonomy Tree")
 
         if not self.access_manager.validate_permission(
@@ -904,7 +851,6 @@ class OmniGraphConsole:
                   f"[{node.get('domain', '')}] (id={node['taxonomy_id']})")
 
     def _concept_hierarchy(self):
-        """Display concept hierarchy."""
         print_header("Concept Hierarchy")
 
         if not self.access_manager.validate_permission(
@@ -925,10 +871,8 @@ class OmniGraphConsole:
             print(f"  {indent}├── {node['name']} [{node['domain']}]{parent}")
 
     def _audit_trail(self):
-        """View audit log entries."""
         print_header("Audit Trail")
 
-        # Permission check
         if not self.access_manager.validate_permission(
             self.current_user_id, "view_audit",
         ):
@@ -957,7 +901,6 @@ class OmniGraphConsole:
             print("  No audit entries found.")
 
     def _sensitive_report(self):
-        """Generate sensitive document access report."""
         print_header("Sensitive Document Access Report")
 
         if not self.access_manager.validate_permission(
@@ -986,7 +929,6 @@ class OmniGraphConsole:
             print("  No sensitive access events found.")
 
     def _query_analytics(self):
-        """Display query usage analytics."""
         print_header("Query Analytics")
 
         days = prompt_int("Analysis period (days)", 30)
@@ -1012,7 +954,6 @@ class OmniGraphConsole:
                 print(f"    {u['user']}: {u['query_count']} queries")
 
     def _role_management(self):
-        """View and manage user roles."""
         print_header("User Role Management")
 
         if not self.access_manager.validate_permission(
@@ -1056,10 +997,8 @@ class OmniGraphConsole:
                 print("  ✓ Role revoked." if success else "  ✗ Failed.")
 
     def _custom_query(self):
-        """Execute a custom SQL SELECT query (read-only)."""
         print_header("Custom SQL Query")
 
-        # Restrict to administrative users; this is a powerful introspection tool.
         if not self.access_manager.validate_permission(
             self.current_user_id, "manage_users",
         ):
@@ -1079,7 +1018,6 @@ class OmniGraphConsole:
         if not query:
             return
 
-        # Basic read-only guardrails: allow SELECT/CTE and reject obvious write DDL/DML.
         normalized = " ".join(query.split())
         upper = normalized.upper()
         if not (upper.startswith("SELECT") or upper.startswith("WITH")):
@@ -1117,7 +1055,6 @@ class OmniGraphConsole:
             else:
                 print("  Query returned no results.")
 
-            # Log usage for audit and analytics.
             if self.access_manager:
                 try:
                     self.access_manager.log_query(
@@ -1133,7 +1070,7 @@ class OmniGraphConsole:
                         resource_type="system",
                         details=f"Custom SQL query executed (rows={len(rows)})",
                     )
-                except Exception as log_exc:  # pragma: no cover - defensive
+                except Exception as log_exc:
                     logger.warning("Failed to log custom SQL usage: %s", log_exc)
         except psycopg2.Error as exc:
             print(f"  ✗ Query error: {exc}")
@@ -1144,12 +1081,7 @@ class OmniGraphConsole:
                 print("  ⚠ Database connection may be in an invalid state after rollback failure.")
 
 
-    # ------------------------------------------------------------------
-    # Search & Discover — additional handlers
-    # ------------------------------------------------------------------
-
     def _browse_entities(self):
-        """Search and browse entities in the knowledge graph."""
         print_header("Browse Entities")
         search = prompt_str("Search term (blank for all)")
         print("  Types: person, organization, technology, location,")
@@ -1199,7 +1131,6 @@ class OmniGraphConsole:
             print(f"  ✗ Error: {exc}")
 
     def _entity_path(self):
-        """Find shortest path between two entities using sp_shortest_path."""
         print_header("Find Entity Path")
         source_id = prompt_int("Source entity ID")
         target_id = prompt_int("Target entity ID")
@@ -1226,12 +1157,7 @@ class OmniGraphConsole:
         except psycopg2.Error as exc:
             print(f"  ✗ Error: {exc}")
 
-    # ------------------------------------------------------------------
-    # Manage Documents — additional handlers
-    # ------------------------------------------------------------------
-
     def _archive_document(self):
-        """Archive (soft-delete) a document."""
         print_header("Archive Document")
         doc_id = prompt_int("Document ID")
         if doc_id is None:
@@ -1259,7 +1185,6 @@ class OmniGraphConsole:
             print(f"\n  ✗ Failed to archive document #{doc_id}.")
 
     def _restore_document(self):
-        """Restore an archived document."""
         print_header("Restore Archived Document")
         doc_id = prompt_int("Document ID")
         if doc_id is None:
@@ -1282,7 +1207,6 @@ class OmniGraphConsole:
             print(f"\n  ✗ Failed to restore document #{doc_id}.")
 
     def _view_versions(self):
-        """View document version history."""
         print_header("Document Version History")
         doc_id = prompt_int("Document ID")
         if doc_id is None:
@@ -1321,12 +1245,7 @@ class OmniGraphConsole:
         except psycopg2.Error as exc:
             print(f"  ✗ Error: {exc}")
 
-    # ------------------------------------------------------------------
-    # Administration — additional handlers
-    # ------------------------------------------------------------------
-
     def _manage_entities(self):
-        """Entity CRUD submenu."""
         print_header("Manage Entities")
 
         if not self.access_manager.validate_permission(
@@ -1410,7 +1329,6 @@ class OmniGraphConsole:
                 print("  ✗ Failed to delete entity.")
 
     def _manage_relationships(self):
-        """Relationship CRUD submenu."""
         print_header("Manage Relationships")
 
         if not self.access_manager.validate_permission(
@@ -1504,7 +1422,6 @@ class OmniGraphConsole:
                 print(f"  ✗ Error: {exc}")
 
     def _detect_duplicates(self):
-        """Find duplicate entity candidates."""
         print_header("Duplicate Entity Detection")
 
         if not self.access_manager.validate_permission(
@@ -1528,7 +1445,6 @@ class OmniGraphConsole:
             print("  No duplicate entities detected.")
 
     def _view_my_profile(self):
-        """View current user's profile, roles, and access matrix."""
         print_header("My Profile & Permissions")
 
         try:
