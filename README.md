@@ -6,7 +6,9 @@ OmniGraph ingests organizational documents, extracts entities / concepts / relat
 
 ---
 
-## Highlights
+- Python 3.14+
+- PostgreSQL 14+
+- `pip`
 
 - **Hybrid retrieval engine** — Postgres full-text search (`tsvector` + GIN), 1024-dim Voyage AI vector similarity, and graph traversal unified behind a single weighted ranker.
 - **Agentic RAG** — Anthropic Claude agent with a native tool-use loop exposing five RBAC-gated retrieval tools (`hybrid_search`, `find_experts`, `get_entity_documents`, `find_related_concepts`, `get_document_content`).
