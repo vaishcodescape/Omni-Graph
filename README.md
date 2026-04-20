@@ -172,9 +172,9 @@ The diagram file must sit **next to this README** at the repository root as `dat
 
 ### 6. Agentic RAG — Core Query Path (`omnigraph/agentic_rag.py`)
 
-- **ReAct agent** (LangGraph `create_react_agent`) with OmniGraph tools as the primary way to query the knowledge graph.
-- **Tools**: `hybrid_search`, `find_experts`, `get_entity_documents`, `find_related_concepts`, `get_document_content` (all respect RBAC).
-- Console **Search & Discover** leads with **Ask (Agent)**; set `GROQ_API_KEY` (and install `langchain-groq`) to use.
+- **Anthropic SDK agent** with native tool-use loop and streaming as the primary way to query the knowledge graph.
+- **Tools**: `hybrid_search`, `find_experts`, `get_entity_documents`, `find_related_concepts`, `get_document_content`, plus document/entity/relationship management tools (all respect RBAC).
+- Console **Search & Discover** leads with **Ask (Agent)**; set `ANTHROPIC_API_KEY` to use.
 
 ## Console Menu Overview
 

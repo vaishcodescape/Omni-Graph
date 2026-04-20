@@ -1,5 +1,3 @@
-"""Full-text search, vector similarity, graph traversal, ranking, query logging."""
-
 import logging
 import re
 import time
@@ -11,7 +9,6 @@ from .embedder import generate_embedding
 
 logger = logging.getLogger("omnigraph.query_engine")
 
-# Stop words for query parsing
 _STOP_WORDS = frozenset({
     "the", "a", "an", "in", "on", "at", "to", "for", "of", "and", "or",
     "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
@@ -26,8 +23,8 @@ _QUERY_TYPE_MAP = {"fulltext": "keyword_search", "semantic": "semantic_search",
                    "graph": "graph_traversal", "hybrid": "semantic_search"}
 
 
+# Full-text, vector, graph, and hybrid document search.
 class SemanticQueryEngine:
-    """Full-text, vector similarity, graph traversal, hybrid search, ranking, audit logging."""
 
     def __init__(self, db_connection, user_id: Optional[int] = None):
         self.db = db_connection
@@ -40,7 +37,6 @@ class SemanticQueryEngine:
         limit: int = 10,
         sensitivity_filter: Optional[List[str]] = None,
     ) -> List[Dict]:
-        """Run search by strategy (fulltext, semantic, graph, hybrid); rank and log."""
         start_time = time.time()
         parsed = self.parse_query(query)
 
@@ -67,7 +63,6 @@ class SemanticQueryEngine:
         limit: int = 10,
         sensitivity_filter: Optional[List[str]] = None,
     ) -> List[Dict]:
-        """PostgreSQL tsvector/tsquery full-text search."""
         try:
             with self.db.conn.cursor() as cur:
                 params: list = [query, query, limit]
@@ -109,7 +104,6 @@ class SemanticQueryEngine:
             return []
 
     def vector_similarity_search(self, query: str, limit: int = 10) -> List[Dict]:
-        """Cosine similarity search via pgvector <=> operator (requires vector(1024) column)."""
         query_vector = self._generate_query_embedding(query)
         query_str = "[" + ",".join(str(v) for v in query_vector) + "]"
         try:
@@ -146,13 +140,11 @@ class SemanticQueryEngine:
     def graph_traverse(
         self, parsed_query: Dict, limit: int = 10,
     ) -> List[Dict]:
-        """Find documents via entity/concept associations and relationship hops."""
         terms = parsed_query.get("terms", [])
         if not terms:
             return []
 
-        # Guardrails for regex construction: cap number and size of terms to avoid
-        # building extremely large patterns that could be slow to evaluate.
+        # Bound regex size before querying.
         unique_terms = list(dict.fromkeys(terms))[:10]
         max_term_length = 64
         max_total_length = 256
@@ -228,7 +220,6 @@ class SemanticQueryEngine:
             return []
 
     def find_experts(self, concept_name: str, limit: int = 5) -> List[Dict]:
-        """Users with most docs and relevance for concept."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -256,7 +247,6 @@ class SemanticQueryEngine:
             return []
 
     def find_related_concepts(self, concept_name: str) -> List[Dict]:
-        """Concepts related via hierarchy and co-occurrence."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -302,7 +292,6 @@ class SemanticQueryEngine:
             return []
 
     def get_entity_documents(self, entity_name: str, limit: int = 10) -> List[Dict]:
-        """Documents linked to entity."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -328,7 +317,6 @@ class SemanticQueryEngine:
 
     @staticmethod
     def parse_query(query: str) -> Dict:
-        """Tokenize, drop stop words, detect intent. Returns {terms, intent, original_query}."""
         words = re.findall(r"\b\w+\b", query.lower())
         terms = [w for w in words if w not in _STOP_WORDS and len(w) > 2]
 
@@ -347,7 +335,6 @@ class SemanticQueryEngine:
 
     @staticmethod
     def rank_results(results: List[Dict]) -> List[Dict]:
-        """Dedupe by document_id and fuse scores by search_type weight."""
         doc_scores: Dict[int, Dict] = {}
         for result in results:
             doc_id = result.get("document_id")
@@ -378,12 +365,7 @@ class SemanticQueryEngine:
         limit: int,
         sensitivity_filter: Optional[List[str]] = None,
     ) -> List[Dict]:
-        """Combine fulltext, semantic, and graph results.
-
-        Each modality fetches more than the final limit to give the ranker
-        headroom to pick the best overall results.
-        """
-        # Fetch more per modality (but keep a sane upper bound for performance).
+        # Fetch extra candidates before ranking.
         per_source_limit = max(limit * 3, limit)
         per_source_limit = min(per_source_limit, 50)
 
@@ -396,7 +378,6 @@ class SemanticQueryEngine:
     def _log_query(
         self, query_text: str, query_type: str, results_count: int, execution_ms: int,
     ) -> None:
-        """Write to query_logs when user_id set."""
         if self.user_id is None:
             return
         db_query_type = _QUERY_TYPE_MAP.get(query_type, "keyword_search")
@@ -420,7 +401,6 @@ class SemanticQueryEngine:
 
     @staticmethod
     def _generate_query_embedding(query: str) -> List[float]:
-        """1024-dim query embedding via Voyage AI voyage-3 (input_type='query')."""
         return generate_embedding(query, input_type="query")
 
 

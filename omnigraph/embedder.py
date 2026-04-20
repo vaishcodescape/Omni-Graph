@@ -1,5 +1,3 @@
-"""Shared embedding utility — Voyage AI voyage-3 (1024-dim)."""
-
 from __future__ import annotations
 
 import logging
@@ -35,12 +33,6 @@ def _get_client():
 
 
 def generate_embedding(text: str, input_type: str = "document") -> List[float]:
-    """Return a 1024-dim embedding for *text* via Voyage AI voyage-3.
-
-    Args:
-        text: The text to embed.
-        input_type: "document" for content being indexed, "query" for search queries.
-    """
     client = _get_client()
     result = client.embed([text.strip()[:32000]], model=MODEL_NAME, input_type=input_type)
     return [round(float(v), 6) for v in result.embeddings[0]]

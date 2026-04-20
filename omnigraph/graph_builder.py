@@ -1,5 +1,3 @@
-"""Knowledge graph: entities, relations, taxonomy, concept hierarchy, document links."""
-
 import logging
 from typing import Dict, List, Optional
 
@@ -24,15 +22,8 @@ GROUP BY relation_type ORDER BY COUNT(*) DESC
 """
 
 
+# Maintains graph entities, relations, taxonomy, and concepts.
 class KnowledgeGraphBuilder:
-    """Builds and maintains the knowledge graph (entities, relations, concepts, taxonomy).
-
-    All mutating methods (add_entity_node, remove_entity_node, add_relationship,
-    map_document_entity, add_taxonomy_node, add_concept_link) wrap their own
-    database operations in a single transaction, committing on success and
-    rolling back on failure. Callers should not expect to group multiple calls
-    into a single larger transaction without extending this class.
-    """
 
     def __init__(self, db_connection):
         self.db = db_connection
@@ -44,7 +35,6 @@ class KnowledgeGraphBuilder:
         description: Optional[str] = None,
         confidence: float = 0.800,
     ) -> Optional[int]:
-        """Add entity node; returns entity_id or None. Deduplicates by (name, entity_type)."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -78,7 +68,6 @@ class KnowledgeGraphBuilder:
             return None
 
     def remove_entity_node(self, entity_id: int) -> bool:
-        """Remove entity and cascaded relationships."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -102,7 +91,6 @@ class KnowledgeGraphBuilder:
         description: Optional[str] = None,
         confidence: Optional[float] = None,
     ) -> bool:
-        """Update entity fields (only non-None args). Returns True if a row was updated."""
         if all(v is None for v in (name, description, confidence)):
             logger.warning("update_entity_node: no fields to update for entity_id=%s", entity_id)
             return False
@@ -152,7 +140,6 @@ class KnowledgeGraphBuilder:
         description: Optional[str] = None,
         source_document_id: Optional[int] = None,
     ) -> Optional[int]:
-        """Add typed relationship; returns relation_id or None. No self-loops."""
         if source_entity_id == target_entity_id:
             logger.warning("Cannot create self-referencing relationship.")
             return None
@@ -184,7 +171,6 @@ class KnowledgeGraphBuilder:
             return None
 
     def remove_relationship(self, relation_id: int) -> bool:
-        """Delete a relationship row by relation_id."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -208,7 +194,6 @@ class KnowledgeGraphBuilder:
         relevance: float = 1.0,
         mention_count: int = 1,
     ) -> bool:
-        """Link document to entity (upsert)."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -237,7 +222,6 @@ class KnowledgeGraphBuilder:
         domain: Optional[str] = None,
         description: Optional[str] = None,
     ) -> Optional[int]:
-        """Add taxonomy node; trigger maintains level and cycle check."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -258,7 +242,6 @@ class KnowledgeGraphBuilder:
             return None
 
     def get_taxonomy_tree(self, root_name: Optional[str] = None) -> List[Dict]:
-        """Full taxonomy tree (recursive CTE). Each dict: taxonomy_id, name, parent_id, level, domain, path."""
         try:
             with self.db.conn.cursor() as cur:
                 if root_name:
@@ -308,7 +291,6 @@ class KnowledgeGraphBuilder:
         child_concept_id: int,
         relationship_type: str = "is_parent_of",
     ) -> bool:
-        """Create parent-child concept link. No self-loops."""
         if parent_concept_id == child_concept_id:
             logger.warning("Cannot create self-referencing concept link.")
             return False
@@ -331,7 +313,6 @@ class KnowledgeGraphBuilder:
             return False
 
     def get_concept_hierarchy(self, root_concept_name: str) -> List[Dict]:
-        """Concept hierarchy from root (recursive CTE). Keys: concept_id, name, domain, parent_name, depth."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -362,7 +343,6 @@ class KnowledgeGraphBuilder:
     def get_entity_neighborhood(
         self, entity_id: int, max_depth: int = 2,
     ) -> List[Dict]:
-        """Neighborhood of entity within N hops. Keys: entity_id, name, entity_type, relation_type, strength, depth."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -395,7 +375,6 @@ class KnowledgeGraphBuilder:
             return []
 
     def detect_duplicate_nodes(self) -> List[Dict]:
-        """Duplicate entity candidates (same type, same name case-insensitive)."""
         try:
             with self.db.conn.cursor() as cur:
                 cur.execute(
@@ -416,7 +395,6 @@ class KnowledgeGraphBuilder:
             return []
 
     def get_graph_stats(self) -> Dict:
-        """Summary counts and entities_by_type, relations_by_type."""
         stats: Dict = {}
         try:
             with self.db.conn.cursor() as cur:
@@ -440,7 +418,6 @@ class KnowledgeGraphBuilder:
             return stats
 
     def build_graph(self) -> Dict:
-        """Run duplicate detection and return stats plus duplicate pairs."""
         logger.info("Starting knowledge graph construction.")
         duplicates = self.detect_duplicate_nodes()
         if duplicates:
