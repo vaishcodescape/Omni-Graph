@@ -170,10 +170,10 @@ The diagram file must sit **next to this README** at the repository root as `dat
 - Audit logging (`audit_logs`)
 - Reports for sensitive access and query analytics
 
-### 6. Agentic RAG — Core Query Path (`omnigraph/agentic_rag.py`)
+### 6. Agentic RAG — Core Retrieval Path (`omnigraph/agentic_rag.py`)
 
 - **Anthropic SDK agent** with native tool-use loop and streaming as the primary way to query the knowledge graph.
-- **Tools**: `hybrid_search`, `find_experts`, `get_entity_documents`, `find_related_concepts`, `get_document_content`, plus document/entity/relationship management tools (all respect RBAC).
+- **Retrieval-only tools**: `hybrid_search`, `find_experts`, `get_entity_documents`, `find_related_concepts`, and `get_document_content` (all respect RBAC).
 - Console **Search & Discover** leads with **Ask (Agent)**; set `ANTHROPIC_API_KEY` to use.
 
 ## Console Menu Overview
@@ -181,13 +181,25 @@ The diagram file must sit **next to this README** at the repository root as `dat
 Main menus in `omnigraph/console_app.py`:
 
 1. `Search & Discover`
-- **Ask (Agent)** — natural-language question over the graph (agentic RAG)
+- **Ask (Agent)** — natural-language retrieval over the graph (agentic RAG)
 - Full-text search
 - Hybrid/semantic search
 - Find experts
 - Explore related concepts
 - Entity-based document lookup
 - Entity neighborhood view
+- Entity path lookup
+
+Agent question examples:
+
+```text
+What documents explain Kubernetes deployment?
+Who are the experts on Deep Learning?
+What concepts are related to Machine Learning?
+Which documents mention PostgreSQL?
+```
+
+Entity neighborhood and path lookup accept entity names as well as numeric IDs. If a name matches multiple entities, the console shows candidates and asks which ID to use.
 
 2. `Manage Documents`
 - Add document

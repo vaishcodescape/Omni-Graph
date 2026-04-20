@@ -1,7 +1,7 @@
 import logging
 import time
 from getpass import getpass
-from typing import Optional
+from typing import Dict, List, Optional
 
 import psycopg2  # type: ignore[import-untyped]
 
@@ -200,15 +200,14 @@ class OmniGraphConsole:
     def _search_menu(self):
         while True:
             print_header("Search & Discover")
-            print("  [1] Ask (Agent) — natural-language question over the knowledge graph")
-            print("  [2] Search Documents (Full-text)")
-            print("  [3] Search Documents (Hybrid/Semantic)")
-            print("  [4] Find Domain Experts")
-            print("  [5] Explore Related Concepts")
-            print("  [6] Entity Document Lookup")
+            print("  [1] Ask (Agent) — natural-language retrieval over the knowledge graph")
+            print("  [2] Search Documents")
+            print("  [3] Find Domain Experts")
+            print("  [4] Explore Related Concepts")
+            print("  [5] Entity Document Lookup")
+            print("  [6] Browse/Search Entities")
             print("  [7] View Entity Neighborhood")
-            print("  [8] Browse/Search Entities")
-            print("  [9] Find Entity Path")
+            print("  [8] Find Entity Path")
             print("  [0] Back")
             print(THIN_SEP)
 
@@ -217,20 +216,18 @@ class OmniGraphConsole:
             if choice == "1":
                 self._ask_agent()
             elif choice == "2":
-                self._fulltext_search()
-            elif choice == "3":
                 self._hybrid_search()
-            elif choice == "4":
+            elif choice == "3":
                 self._find_experts()
-            elif choice == "5":
+            elif choice == "4":
                 self._related_concepts()
-            elif choice == "6":
+            elif choice == "5":
                 self._entity_documents()
+            elif choice == "6":
+                self._browse_entities()
             elif choice == "7":
                 self._entity_neighborhood()
             elif choice == "8":
-                self._browse_entities()
-            elif choice == "9":
                 self._entity_path()
             elif choice == "0":
                 break
@@ -290,7 +287,7 @@ class OmniGraphConsole:
             print("  No results found.")
 
     def _hybrid_search(self):
-        print_header("Hybrid Search")
+        print_header("Search Documents")
         query = prompt_str("Search query")
         if not query:
             return
@@ -402,7 +399,7 @@ class OmniGraphConsole:
         else:
             print(f"  No documents found for entity '{entity}'.")
 
-    def _entity_neighborhood(self):
+    def _entity_neighborhood(self, entity_ref: Optional[str] = None):
         print_header("Entity Neighborhood")
         if not self.access_manager.validate_permission(
             self.current_user_id, "view_graph",
@@ -410,7 +407,7 @@ class OmniGraphConsole:
             print("  ✗ Access denied. Requires 'view_graph' permission.")
             return
 
-        entity_id = prompt_int("Entity ID")
+        entity_id = self._resolve_entity_id(entity_ref, "Entity name or ID")
         if entity_id is None:
             return
         depth = prompt_int("Max depth", 2)
@@ -433,6 +430,67 @@ class OmniGraphConsole:
             print_table(headers, rows, [6, 22, 14, 18, 10, 6])
         else:
             print(f"  No neighbors found for entity #{entity_id}.")
+
+    def _resolve_entity_id(self, entity_ref: Optional[str], prompt_label: str) -> Optional[int]:
+        raw = entity_ref or prompt_str(prompt_label)
+        if not raw:
+            return None
+
+        value = str(raw).strip()
+        if value.isdigit():
+            return int(value)
+
+        candidates = self._find_entity_candidates(value)
+        if not candidates:
+            print(f"  No entity found for '{value}'. Try Browse/Search Entities to discover the exact name.")
+            return None
+
+        exact = [c for c in candidates if c["name"].lower() == value.lower()]
+        if len(exact) == 1:
+            return exact[0]["entity_id"]
+
+        print(f"\n  Matching entities for '{value}':")
+        rows = [
+            [
+                c["entity_id"],
+                c["name"][:32],
+                c["entity_type"],
+                f"{c['confidence']:.3f}" if c.get("confidence") is not None else "",
+                c["doc_count"],
+            ]
+            for c in candidates
+        ]
+        print_table(["ID", "Name", "Type", "Confidence", "Docs"], rows, [6, 34, 16, 12, 6])
+        selected = prompt_int("Use entity ID")
+        if selected is None:
+            return None
+        return selected
+
+    def _find_entity_candidates(self, term: str, limit: int = 10) -> List[Dict]:
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT e.entity_id, e.name, e.entity_type, e.confidence,
+                           (SELECT COUNT(*) FROM omnigraph.document_entities de
+                            WHERE de.entity_id = e.entity_id) AS doc_count
+                    FROM omnigraph.entities e
+                    WHERE LOWER(e.name) = LOWER(%s)
+                       OR e.name ILIKE %s
+                       OR e.description ILIKE %s
+                    ORDER BY
+                        CASE WHEN LOWER(e.name) = LOWER(%s) THEN 0 ELSE 1 END,
+                        doc_count DESC,
+                        e.name
+                    LIMIT %s
+                    """,
+                    (term, f"%{term}%", f"%{term}%", term, limit),
+                )
+                columns = ["entity_id", "name", "entity_type", "confidence", "doc_count"]
+                return [dict(zip(columns, row)) for row in cur.fetchall()]
+        except psycopg2.Error as exc:
+            print(f"  ✗ Entity lookup error: {exc}")
+            return []
 
     def _manage_menu(self):
         while True:
@@ -1130,10 +1188,14 @@ class OmniGraphConsole:
         except psycopg2.Error as exc:
             print(f"  ✗ Error: {exc}")
 
-    def _entity_path(self):
+    def _entity_path(
+        self,
+        source_ref: Optional[str] = None,
+        target_ref: Optional[str] = None,
+    ):
         print_header("Find Entity Path")
-        source_id = prompt_int("Source entity ID")
-        target_id = prompt_int("Target entity ID")
+        source_id = self._resolve_entity_id(source_ref, "Source entity name or ID")
+        target_id = self._resolve_entity_id(target_ref, "Target entity name or ID")
         if source_id is None or target_id is None:
             return
         max_depth = prompt_int("Max depth", 6)
