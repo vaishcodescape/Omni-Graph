@@ -1,15 +1,14 @@
 import logging
 import re
 from getpass import getpass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import psycopg2  # type: ignore[import-untyped]
 
 from .access_control_audit import AccessControlManager
 from .agentic_rag import get_anthropic_agent
-from .entity_relation_extractor import EntityRelationExtractor
 from .graph_builder import KnowledgeGraphBuilder
-from .ingestion_pipeline import DatabaseConnection, DocumentIngester
+from .ingestion_pipeline import DatabaseConnection
 from .semantic_query_engine import SemanticQueryEngine
 
 logging.basicConfig(
@@ -18,17 +17,72 @@ logging.basicConfig(
 )
 logger = logging.getLogger("omnigraph.console")
 
-SEPARATOR = "=" * 70
-THIN_SEP = "-" * 70
+# Visual constants
+
+BOX_W = 64
+CYAN = "\033[96m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+DIM = "\033[2m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
+LOGO = f"""{CYAN}
+    ___                  _  ____                 _
+   / _ \\ _ __ ___  _ __ (_)/ ___|_ __ __ _ _ __ | |__
+  | | | | '_ ` _ \\| '_ \\| | |  _| '__/ _` | '_ \\| '_ \\
+  | |_| | | | | | | | | | | |_| | | | (_| | |_) | | | |
+   \\___/|_| |_| |_|_| |_|_|\\____|_|  \\__,_| .__/|_| |_|
+                                            |_|
+{RESET}"""
+
+
+def _strip_ansi(s: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", s)
+
+
+def _box_top() -> str:
+    return f"  {DIM}+{'=' * BOX_W}+{RESET}"
+
+
+def _box_mid() -> str:
+    return f"  {DIM}+{'-' * BOX_W}+{RESET}"
+
+
+def _box_bot() -> str:
+    return f"  {DIM}+{'=' * BOX_W}+{RESET}"
+
+
+def _box_row(text: str, align: str = "left") -> str:
+    stripped = _strip_ansi(text)
+    pad = BOX_W - 2 - len(stripped)
+    if pad < 0:
+        text = text[: BOX_W - 2]
+        pad = 0
+    if align == "center":
+        left_pad = pad // 2
+        right_pad = pad - left_pad
+        inner = " " * left_pad + text + " " * right_pad
+    else:
+        inner = " " + text + " " * (pad - 1) if pad > 0 else " " + text
+    return f"  {DIM}|{RESET}{inner}{DIM}|{RESET}"
 
 
 def print_header(title: str) -> None:
-    print(f"\n{SEPARATOR}\n  {title}\n{SEPARATOR}")
+    print()
+    print(_box_top())
+    print(_box_row(f"{BOLD}{CYAN}{title}{RESET}", align="center"))
+    print(_box_bot())
+
+
+def print_section(title: str) -> None:
+    print(f"\n  {BOLD}{title}{RESET}")
+    print(f"  {DIM}{'.' * (BOX_W - 4)}{RESET}")
 
 
 def print_table(headers: list, rows: list, widths: Optional[list] = None) -> None:
     if not rows:
-        print("  (No results)")
+        print(f"  {DIM}(no results){RESET}")
         return
 
     widths = widths or [
@@ -38,14 +92,19 @@ def print_table(headers: list, rows: list, widths: Optional[list] = None) -> Non
         )
         for i, h in enumerate(headers)
     ]
-    print("  " + "  ".join(str(h).ljust(w) for h, w in zip(headers, widths)))
-    print("  " + "  ".join("-" * w for w in widths))
+    header_line = "".join(f"{BOLD}{str(h).ljust(w)}{RESET}" for h, w in zip(headers, widths))
+    print(f"  {header_line}")
+    print(f"  {DIM}{''.join('-' * w for w in widths)}{RESET}")
     for row in rows:
-        print("  " + "  ".join(str(row[i] if i < len(row) else "").ljust(w)[:w] for i, w in enumerate(widths)))
+        cells = []
+        for i, w in enumerate(widths):
+            val = str(row[i] if i < len(row) else "")
+            cells.append(val.ljust(w)[:w])
+        print(f"  {''.join(cells)}")
 
 
 def prompt_int(message: str, default: Optional[int] = None) -> Optional[int]:
-    suffix = f" [{default}]" if default is not None else ""
+    suffix = f" {DIM}[{default}]{RESET}" if default is not None else ""
     try:
         value = input(f"  {message}{suffix}: ").strip()
         return default if not value and default is not None else int(value)
@@ -54,7 +113,7 @@ def prompt_int(message: str, default: Optional[int] = None) -> Optional[int]:
 
 
 def prompt_str(message: str, default: str = "") -> str:
-    suffix = f" [{default}]" if default else ""
+    suffix = f" {DIM}[{default}]{RESET}" if default else ""
     try:
         value = input(f"  {message}{suffix}: ").strip()
         return value or default
@@ -63,18 +122,18 @@ def prompt_str(message: str, default: str = "") -> str:
 
 
 class OmniGraphConsole:
-    """Prompt-first console for OmniGraph."""
+    """Focused console for OmniGraph: Graph Search, Agent, and Relations."""
 
     def __init__(self):
         self.db = None
-        self.ingester = None
-        self.extractor = None
         self.graph_builder = None
         self.query_engine = None
         self.access_manager = None
         self.agent = None
         self.current_user_id = None
         self.current_username = None
+
+    # Connection & Auth
 
     def connect(
         self,
@@ -86,13 +145,11 @@ class OmniGraphConsole:
     ) -> None:
         self.db = DatabaseConnection(host, port, dbname, user, password)
         self.db.connect()
-        self.ingester = DocumentIngester(self.db)
-        self.extractor = EntityRelationExtractor(self.db)
         self.graph_builder = KnowledgeGraphBuilder(self.db)
         self.access_manager = AccessControlManager(self.db)
 
     def authenticate(self) -> bool:
-        print_header("OmniGraph Login")
+        print_header("Login")
         username = prompt_str("Username")
         if not username:
             return False
@@ -109,7 +166,7 @@ class OmniGraphConsole:
             row = cur.fetchone()
 
         if not row:
-            print("\n  User not found or inactive.\n")
+            print(f"\n  {YELLOW}User not found or inactive.{RESET}\n")
             return False
 
         self.current_user_id, self.current_username = row
@@ -120,33 +177,36 @@ class OmniGraphConsole:
             resource_type="system",
             details=f"Console login: {username}",
         )
-        print(f"\n  Welcome, {self.current_username}.\n")
+        print(f"\n  {GREEN}Welcome, {self.current_username}.{RESET}\n")
         return True
 
+    #  Main loop 
+
     def run(self) -> None:
-        print_header("OmniGraph")
-        print("  Prompt-based knowledge graph assistant\n")
+        print(LOGO)
+        print_header("Connect to Database")
 
         host = prompt_str("Database host", "localhost")
         port = prompt_int("Database port", 5432)
         dbname = prompt_str("Database name", "omnigraph")
         db_user = prompt_str("Database user", "postgres")
         try:
-            db_pass = getpass("  Database password (leave blank to use environment): ") or None
+            db_pass = getpass("  Database password (leave blank for env): ") or None
         except (EOFError, KeyboardInterrupt):
             db_pass = None
 
         try:
             self.connect(host, port, dbname, db_user, db_pass)
         except Exception as exc:
-            print(f"\n  Connection failed: {exc}")
+            print(f"\n  {YELLOW}Connection failed: {exc}{RESET}")
             return
 
         if not self.authenticate():
-            print("  Exiting.\n")
+            print(f"  {DIM}Exiting.{RESET}\n")
             return
 
-        self._prompt_loop()
+        self._main_menu()
+
         self.access_manager.log_audit(
             user_id=self.current_user_id,
             action="logout",
@@ -154,79 +214,62 @@ class OmniGraphConsole:
             details="Console logout",
         )
         self.db.disconnect()
-        print("\n  Goodbye.\n")
+        print(f"\n  {DIM}Goodbye.{RESET}\n")
 
-    def _prompt_loop(self) -> None:
-        self._help()
+    def _main_menu(self) -> None:
         while True:
-            try:
-                text = input("\nOmniGraph> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                break
-            if not text:
-                continue
-            if text.lower() in {"exit", "quit", "q"}:
-                break
-            self._handle_prompt(text)
+            print()
+            print(_box_top())
+            print(_box_row(f"{BOLD}{CYAN}OmniGraph Console{RESET}", align="center"))
+            print(_box_mid())
+            print(_box_row(f"{GREEN}[1]{RESET} Graph Search    {DIM}Search the knowledge graph{RESET}"))
+            print(_box_row(f"{GREEN}[2]{RESET} Agent Prompt    {DIM}Ask the AI agent a question{RESET}"))
+            print(_box_row(f"{GREEN}[3]{RESET} Relations       {DIM}Explore entity relationships{RESET}"))
+            print(_box_mid())
+            print(_box_row(f"{DIM}[q] Quit{RESET}"))
+            print(_box_bot())
 
-    def _handle_prompt(self, text: str) -> None:
-        q = text.lower()
-        try:
-            if q in {"help", "?"}:
-                self._help()
-            elif "add document" in q or "new document" in q:
-                self._add_document()
-            elif "profile" in q or "who am i" in q or "permissions" in q:
-                self._profile()
-            elif "recent" in q or "list documents" in q:
-                self._recent_documents()
-            elif "search" in q or "find documents" in q or "documents about" in q:
-                self._search_documents(self._topic(text, ("search documents", "find documents", "documents about", "search")) or text)
-            elif "expert" in q or "who knows" in q or "specialist" in q:
-                self._experts(self._topic(text, ("who knows", "experts", "expert", "specialist")))
-            elif "related" in q or "similar" in q:
-                self._related_concepts(self._topic(text, ("related to", "related", "similar to", "similar")))
-            elif "documents for" in q or "documents linked to" in q or "entity documents" in q:
-                self._entity_documents(self._topic(text, ("documents for", "documents linked to", "entity documents")))
-            elif "neighborhood" in q or "neighbours" in q or "neighbors" in q:
-                self._entity_neighborhood(self._topic(text, ("neighborhood of", "neighborhood", "neighbors of", "neighbours of")))
-            elif "path" in q or "connection between" in q:
-                source, target = self._path_terms(text)
-                self._entity_path(source, target)
+            choice = prompt_str("Choose").strip().lower()
+
+            if choice in {"q", "quit", "exit"}:
+                break
+            elif choice == "1":
+                self._graph_search_menu()
+            elif choice == "2":
+                self._agent_prompt()
+            elif choice == "3":
+                self._relations_menu()
             else:
-                self._ask_or_search(text)
-        except Exception as exc:
-            logger.exception("Prompt failed")
-            print(f"  Error: {exc}")
+                print(f"  {YELLOW}Invalid choice. Enter 1, 2, 3, or q.{RESET}")
 
-    def _help(self) -> None:
-        print_header("Ask OmniGraph")
-        print("  Ask in natural language. Examples:")
-        print("    search documents about Kubernetes security")
-        print("    who are the experts in machine learning?")
-        print("    related concepts to vector databases")
-        print("    documents for entity OpenAI")
-        print("    neighborhood of Kubernetes")
-        print("    path between Kubernetes and Docker")
-        print("    recent documents")
-        print("    add document")
-        print("    profile")
-        print("    exit")
+    # Graph Search 
 
-    def _ask_or_search(self, question: str) -> None:
-        if self.agent is None:
-            self.agent = get_anthropic_agent(self.db, self.current_user_id)
-        if self.agent is not None:
-            result = self.agent.run(question)
-            print(f"\n  {result.get('answer', '').strip()}\n")
-            self._audit("view", "system", details=f"Agent question: {question[:80]}")
+    def _graph_search_menu(self) -> None:
+        print_header("Graph Search")
+        query = prompt_str("Search query")
+        if not query:
             return
-        self._search_documents(question)
 
-    def _search_documents(self, query: str) -> None:
-        print_header("Documents")
-        results = self.query_engine.search(query, strategy="hybrid", limit=10)
+        print()
+        print(_box_top())
+        print(_box_row(f"{BOLD}Search Strategy{RESET}", align="center"))
+        print(_box_mid())
+        print(_box_row(f"{GREEN}[1]{RESET} Hybrid     {DIM}Full-text + Semantic + Graph (recommended){RESET}"))
+        print(_box_row(f"{GREEN}[2]{RESET} Semantic   {DIM}Vector similarity search{RESET}"))
+        print(_box_row(f"{GREEN}[3]{RESET} Full-text  {DIM}Keyword matching{RESET}"))
+        print(_box_row(f"{GREEN}[4]{RESET} Graph      {DIM}Entity-based graph traversal{RESET}"))
+        print(_box_bot())
+
+        strat_choice = prompt_str("Strategy", "1").strip()
+        strategy_map = {"1": "hybrid", "2": "semantic", "3": "fulltext", "4": "graph"}
+        strategy = strategy_map.get(strat_choice, "hybrid")
+        limit = prompt_int("Max results", 10)
+
+        print_section(f"Results for \"{query}\" ({strategy})")
+
+        results = self.query_engine.search(query, strategy=strategy, limit=limit)
         results = self._filter_readable(results)
+
         rows = [
             [
                 r["document_id"],
@@ -237,174 +280,200 @@ class OmniGraphConsole:
             ]
             for r in results
         ]
-        print_table(["ID", "Title", "Type", "Score", "Sources"], rows, [6, 40, 16, 8, 24])
+        print_table(
+            ["ID", "Title", "Type", "Score", "Sources"],
+            rows,
+            [6, 40, 16, 8, 24],
+        )
 
-    def _experts(self, concept: str) -> None:
-        concept = concept or prompt_str("Concept")
-        if not concept:
-            return
-        print_header(f"Experts: {concept}")
-        rows = [
-            [e["full_name"], e["department"], e["title"][:25], e["doc_count"], f"{e['expertise_score']:.1f}"]
-            for e in self.query_engine.find_experts(concept)
-        ]
-        print_table(["Name", "Department", "Title", "Docs", "Score"], rows, [22, 16, 27, 6, 8])
+        self._audit("search", "document", details=f"Graph search: {query[:80]}")
 
-    def _related_concepts(self, concept: str) -> None:
-        concept = concept or prompt_str("Concept")
-        if not concept:
-            return
-        print_header(f"Related Concepts: {concept}")
-        rows = [
-            [c["name"], c["domain"], c["relationship_types"], c["connection_strength"]]
-            for c in self.query_engine.find_related_concepts(concept)
-        ]
-        print_table(["Concept", "Domain", "Relation", "Strength"], rows, [28, 16, 25, 10])
+    # ── 2. Agent Prompt ───────────────────────────────────────────────────
 
-    def _entity_documents(self, entity: str) -> None:
-        entity = entity or prompt_str("Entity")
-        if not entity:
-            return
-        print_header(f"Documents For: {entity}")
-        docs = self._filter_readable(self.query_engine.get_entity_documents(entity))
-        rows = [
-            [d["document_id"], d["title"][:40], d["source_type"], f"{d['relevance']:.3f}", d["mention_count"]]
-            for d in docs
-        ]
-        print_table(["ID", "Title", "Type", "Relevance", "Mentions"], rows, [6, 42, 16, 10, 10])
+    def _agent_prompt(self) -> None:
+        print_header("Agent Prompt")
+        print(f"  {DIM}Ask the AI agent anything about your knowledge graph.{RESET}")
+        print(f"  {DIM}Type 'back' to return to the main menu.{RESET}\n")
 
-    def _entity_neighborhood(self, entity: str) -> None:
-        if not self._require_permission("view_graph"):
+        if self.agent is None:
+            self.agent = get_anthropic_agent(self.db, self.current_user_id)
+        if self.agent is None:
+            print(f"  {YELLOW}Agent unavailable. Set ANTHROPIC_API_KEY to enable.{RESET}")
             return
-        entity_id = self._resolve_entity_id(entity or prompt_str("Entity name or ID"))
-        if entity_id is None:
-            return
-        depth = prompt_int("Max depth", 2)
-        print_header("Entity Neighborhood")
-        rows = [
-            [n["entity_id"], n["name"], n["entity_type"], n["relation_type"], f"{n['strength']:.3f}", n["depth"]]
-            for n in self.graph_builder.get_entity_neighborhood(entity_id, depth)
-        ]
-        print_table(["ID", "Name", "Type", "Relation", "Strength", "Depth"], rows, [6, 22, 14, 18, 10, 6])
 
-    def _entity_path(self, source: str = "", target: str = "") -> None:
-        source_id = self._resolve_entity_id(source or prompt_str("Source entity name or ID"))
-        target_id = self._resolve_entity_id(target or prompt_str("Target entity name or ID"))
+        while True:
+            try:
+                question = input(f"\n  {CYAN}You:{RESET} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not question:
+                continue
+            if question.lower() in {"back", "exit", "quit", "q"}:
+                break
+
+            print(f"\n  {DIM}Thinking...{RESET}")
+            try:
+                result = self.agent.run(question)
+                answer = result.get("answer", "").strip()
+                if answer:
+                    print_section("Agent Response")
+                    for line in answer.split("\n"):
+                        print(f"  {line}")
+                else:
+                    print(f"  {YELLOW}No answer returned.{RESET}")
+                self._audit("view", "system", details=f"Agent question: {question[:80]}")
+            except Exception as exc:
+                logger.exception("Agent failed")
+                print(f"  {YELLOW}Agent error: {exc}{RESET}")
+
+  #Relations
+
+    def _relations_menu(self) -> None:
+        while True:
+            print_header("Entity Relations")
+            print()
+            print(_box_top())
+            print(_box_row(f"{GREEN}[1]{RESET} Path Between      {DIM}Shortest path between two entities{RESET}"))
+            print(_box_row(f"{GREEN}[2]{RESET} Neighborhood       {DIM}Explore an entity's neighbors{RESET}"))
+            print(_box_row(f"{GREEN}[3]{RESET} Related Concepts   {DIM}Find concepts related to a topic{RESET}"))
+            print(_box_row(f"{GREEN}[4]{RESET} Entity Documents   {DIM}Documents linked to an entity{RESET}"))
+            print(_box_mid())
+            print(_box_row(f"{DIM}[b] Back{RESET}"))
+            print(_box_bot())
+
+            choice = prompt_str("Choose").strip().lower()
+
+            if choice in {"b", "back", "q"}:
+                break
+            elif choice == "1":
+                self._entity_path()
+            elif choice == "2":
+                self._entity_neighborhood()
+            elif choice == "3":
+                self._related_concepts()
+            elif choice == "4":
+                self._entity_documents()
+            else:
+                print(f"  {YELLOW}Invalid choice.{RESET}")
+
+    def _entity_path(self) -> None:
+        print_section("Shortest Path")
+        source = prompt_str("Source entity (name or ID)")
+        target = prompt_str("Target entity (name or ID)")
+        source_id = self._resolve_entity_id(source)
+        target_id = self._resolve_entity_id(target)
         if source_id is None or target_id is None:
             return
         max_depth = prompt_int("Max depth", 6)
-        print_header("Entity Path")
+
         with self.db.conn.cursor() as cur:
-            cur.execute("SELECT * FROM omnigraph.sp_shortest_path(%s, %s, %s)", (source_id, target_id, max_depth))
+            cur.execute(
+                "SELECT * FROM omnigraph.sp_shortest_path(%s, %s, %s)",
+                (source_id, target_id, max_depth),
+            )
             rows = cur.fetchall()
+
         if not rows:
-            print(f"  No path found between entity #{source_id} and #{target_id}.")
+            print(f"\n  {YELLOW}No path found between entity #{source_id} and #{target_id}.{RESET}")
             return
+
         for i, row in enumerate(rows):
-            print(f"\n  Path {i + 1} (length={row[0]}):")
-            print(f"    Entities:  {' -> '.join(row[1])}")
-            print(f"    Relations: {' -> '.join(row[2])}")
+            print(f"\n  {GREEN}Path {i + 1}{RESET} {DIM}(length={row[0]}){RESET}")
+            entities = row[1]
+            relations = row[2]
+            parts = []
+            
+            for j, ent in enumerate(entities):
+                parts.append(f"{BOLD}{ent}{RESET}")
+                if j < len(relations):
+                    parts.append(f" {DIM}--[{relations[j]}]-->{RESET} ")
+            print(f"    {''.join(parts)}")
 
-    def _recent_documents(self) -> None:
-        print_header("Recent Documents")
-        limit = prompt_int("Number of documents", 10)
-        with self.db.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT d.document_id, d.title, d.source_type, d.sensitivity_level,
-                       u.full_name, d.created_at::DATE
-                FROM omnigraph.documents d
-                JOIN omnigraph.users u ON u.user_id = d.uploaded_by
-                WHERE d.is_archived = FALSE
-                ORDER BY d.created_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            rows = [
-                r for r in cur.fetchall()
-                if self.access_manager.check_access(self.current_user_id, "document", r[0], "read")
+    def _entity_neighborhood(self) -> None:
+        print_section("Entity Neighborhood")
+        entity = prompt_str("Entity name or ID")
+        entity_id = self._resolve_entity_id(entity)
+        if entity_id is None:
+            return
+        depth = prompt_int("Max depth", 2)
+
+        neighbors = self.graph_builder.get_entity_neighborhood(entity_id, depth)
+        rows = [
+            [
+                n["entity_id"],
+                n["name"],
+                n["entity_type"],
+                n["relation_type"],
+                f"{n['strength']:.3f}",
+                n["depth"],
             ]
+            for n in neighbors
+        ]
         print_table(
-            ["ID", "Title", "Type", "Sensitivity", "Author", "Date"],
-            [[r[0], str(r[1])[:35], r[2], r[3], r[4], str(r[5])] for r in rows],
-            [6, 37, 16, 14, 20, 12],
+            ["ID", "Name", "Type", "Relation", "Strength", "Depth"],
+            rows,
+            [6, 22, 14, 18, 10, 6],
         )
 
-    def _add_document(self) -> None:
-        print_header("Add Document")
-        title = prompt_str("Title")
-        if not title:
-            return
-        source_type = prompt_str("Source type", "technical_doc")
-        sensitivity = prompt_str("Sensitivity", "internal")
-        summary = prompt_str("Summary (optional)")
-        content = prompt_str("Content")
-        if not content:
-            print("  Content is required.")
+    def _related_concepts(self) -> None:
+        print_section("Related Concepts")
+        concept = prompt_str("Concept name")
+        if not concept:
             return
 
-        doc_id = self.ingester.ingest_document(
-            title=title,
-            source_type=source_type,
-            content=content,
-            uploaded_by=self.current_user_id,
-            sensitivity_level=sensitivity,
-            summary=summary or None,
+        related = self.query_engine.find_related_concepts(concept)
+        rows = [
+            [c["name"], c["domain"], c["relationship_types"], c["connection_strength"]]
+            for c in related
+        ]
+        print_table(
+            ["Concept", "Domain", "Relation", "Strength"],
+            rows,
+            [28, 16, 25, 10],
         )
-        if not doc_id:
-            print("  Failed to create document.")
+
+    def _entity_documents(self) -> None:
+        print_section("Entity Documents")
+        entity = prompt_str("Entity name")
+        if not entity:
             return
 
-        result = self.extractor.process_document(doc_id)
-        print(
-            f"  Document created (ID: {doc_id}). "
-            f"Extracted {len(result['entities'])} entities, "
-            f"{len(result['concepts'])} concepts, "
-            f"{len(result['relationships'])} relationships."
+        docs = self._filter_readable(self.query_engine.get_entity_documents(entity))
+        rows = [
+            [
+                d["document_id"],
+                d["title"][:40],
+                d["source_type"],
+                f"{d['relevance']:.3f}",
+                d["mention_count"],
+            ]
+            for d in docs
+        ]
+        print_table(
+            ["ID", "Title", "Type", "Relevance", "Mentions"],
+            rows,
+            [6, 42, 16, 10, 10],
         )
-        self._audit("create", "document", doc_id, f"Created document: {title}")
 
-    def _profile(self) -> None:
-        print_header("Profile")
-        with self.db.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT user_id, username, email, full_name, department, title
-                FROM omnigraph.users
-                WHERE user_id = %s
-                """,
-                (self.current_user_id,),
-            )
-            user = cur.fetchone()
-        if user:
-            labels = ["User ID", "Username", "Email", "Full Name", "Department", "Title"]
-            for label, value in zip(labels, user):
-                print(f"  {label}: {value}")
-
-        roles = self.access_manager.get_user_roles(self.current_user_id)
-        if roles:
-            print("\n  Roles:")
-            for role in roles:
-                perms = ", ".join(role["permissions"]) if role["permissions"] else "none"
-                print(f"    {role['role_name']}: {perms}")
+    # ── Helpers ───────────────────────────────────────────────────────────
 
     def _resolve_entity_id(self, value: str) -> Optional[int]:
         value = value.strip()
         if not value:
+            print(f"  {YELLOW}No entity specified.{RESET}")
             return None
         if value.isdigit():
             return int(value)
 
         matches = self._find_entity_candidates(value)
         if not matches:
-            print(f"  No entity found for '{value}'.")
+            print(f"  {YELLOW}No entity found for '{value}'.{RESET}")
             return None
         exact = [m for m in matches if m["name"].lower() == value.lower()]
         if len(exact) == 1:
             return exact[0]["entity_id"]
 
-        print(f"\n  Matching entities for '{value}':")
+        print(f"\n  {DIM}Multiple matches for '{value}':{RESET}")
         print_table(
             ["ID", "Name", "Type", "Confidence", "Docs"],
             [
@@ -421,10 +490,14 @@ class OmniGraphConsole:
                 cur.execute(
                     """
                     SELECT e.entity_id, e.name, e.entity_type, e.confidence,
-                           (SELECT COUNT(*) FROM omnigraph.document_entities de WHERE de.entity_id = e.entity_id) AS doc_count
+                           (SELECT COUNT(*) FROM omnigraph.document_entities de
+                            WHERE de.entity_id = e.entity_id) AS doc_count
                     FROM omnigraph.entities e
-                    WHERE LOWER(e.name) = LOWER(%s) OR e.name ILIKE %s OR e.description ILIKE %s
-                    ORDER BY CASE WHEN LOWER(e.name) = LOWER(%s) THEN 0 ELSE 1 END, doc_count DESC, e.name
+                    WHERE LOWER(e.name) = LOWER(%s)
+                       OR e.name ILIKE %s
+                       OR e.description ILIKE %s
+                    ORDER BY CASE WHEN LOWER(e.name) = LOWER(%s) THEN 0 ELSE 1 END,
+                             doc_count DESC, e.name
                     LIMIT %s
                     """,
                     (term, f"%{term}%", f"%{term}%", term, limit),
@@ -432,21 +505,17 @@ class OmniGraphConsole:
                 columns = ["entity_id", "name", "entity_type", "confidence", "doc_count"]
                 return [dict(zip(columns, row)) for row in cur.fetchall()]
         except psycopg2.Error as exc:
-            print(f"  Entity lookup error: {exc}")
+            print(f"  {YELLOW}Entity lookup error: {exc}{RESET}")
             return []
 
     def _filter_readable(self, rows: List[Dict]) -> List[Dict]:
         return [
             row for row in rows
             if row.get("document_id") is not None
-            and self.access_manager.check_access(self.current_user_id, "document", row["document_id"], "read")
+            and self.access_manager.check_access(
+                self.current_user_id, "document", row["document_id"], "read"
+            )
         ]
-
-    def _require_permission(self, permission: str) -> bool:
-        if self.access_manager.validate_permission(self.current_user_id, permission):
-            return True
-        print(f"  Access denied. Requires '{permission}' permission.")
-        return False
 
     def _audit(
         self,
@@ -463,42 +532,13 @@ class OmniGraphConsole:
             details=details,
         )
 
-    @staticmethod
-    def _topic(text: str, markers: Tuple[str, ...]) -> str:
-        lowered = text.lower()
-        for marker in markers:
-            idx = lowered.find(marker)
-            if idx >= 0:
-                topic = text[idx + len(marker):].strip(" ?:.-")
-                prefixes = (
-                    "are", "is", "the", "a", "an", "to", "of", "about", "in",
-                    "on", "for", "entity", "concept", "concepts",
-                )
-                changed = True
-                while changed:
-                    changed = False
-                    for prefix in prefixes:
-                        prefix_text = f"{prefix} "
-                        if topic.lower().startswith(prefix_text):
-                            topic = topic[len(prefix_text):].strip(" ?:.-")
-                            changed = True
-                return topic
-        return ""
-
-    @staticmethod
-    def _path_terms(text: str) -> Tuple[str, str]:
-        match = re.search(r"(?:path|connection)\s+between\s+(.+?)\s+and\s+(.+)", text, re.I)
-        if match:
-            return match.group(1).strip(" ?:.-"), match.group(2).strip(" ?:.-")
-        return "", ""
-
 
 if __name__ == "__main__":
     console = OmniGraphConsole()
     try:
         console.run()
     except KeyboardInterrupt:
-        print("\n\n  Interrupted. Goodbye.\n")
+        print(f"\n\n  {DIM}Interrupted. Goodbye.{RESET}\n")
     except Exception as exc:
         print(f"\n  Fatal error: {exc}")
         logger.exception("Fatal error in console application")
