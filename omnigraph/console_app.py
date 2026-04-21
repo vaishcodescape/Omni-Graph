@@ -326,17 +326,38 @@ class OmniGraphConsole:
             print(f"\n  {DIM}Thinking...{RESET}")
             try:
                 result = self.agent.run(question)
-                answer = result.get("answer", "").strip()
-                if answer:
-                    print_section("Agent Response")
-                    for line in answer.split("\n"):
-                        print(f"  {line}")
-                else:
-                    print(f"  {YELLOW}No answer returned.{RESET}")
+                self._render_agent_result(result)
                 self._audit("view", "system", details=f"Agent question: {question[:80]}")
             except Exception as exc:
                 logger.exception("Agent failed")
                 print(f"  {YELLOW}Agent error: {exc}{RESET}")
+
+    def _render_agent_result(self, result: dict) -> None:
+        answer = (result.get("answer") or "").strip()
+        tools_used = result.get("tools_used") or []
+        citations = result.get("citations") or []
+
+        if not answer:
+            print(f"  {YELLOW}No answer returned.{RESET}")
+            return
+
+        print_section("Answer")
+        for line in answer.split("\n"):
+            print(f"  {line}")
+
+        if tools_used:
+            print_section("Tools Used")
+            rows = [
+                [i + 1, t.get("name", ""), ", ".join(f"{k}={v}" for k, v in (t.get("input") or {}).items())[:60]]
+                for i, t in enumerate(tools_used)
+            ]
+            print_table(["#", "Tool", "Input"], rows, [4, 24, 62])
+
+        if citations:
+            print_section("Citations")
+            rows = [[c["document_id"], str(c.get("title", ""))[:50], c.get("source_type", "")]
+                    for c in citations]
+            print_table(["Doc ID", "Title", "Type"], rows, [8, 52, 18])
 
   #Relations
 

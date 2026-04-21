@@ -1,4 +1,5 @@
 DROP SCHEMA IF EXISTS omnigraph CASCADE;
+
 CREATE SCHEMA omnigraph;
 SET search_path TO omnigraph;
 
