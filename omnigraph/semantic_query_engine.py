@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 import psycopg2
 
-from .embedder import generate_embedding
+from .embedder import generate_embedding, is_available as _embedder_available
 
 logger = logging.getLogger("omnigraph.query_engine")
 
@@ -22,6 +22,8 @@ _STOP_WORDS = frozenset({
 _RANK_WEIGHTS = {"fulltext": 1.0, "semantic": 1.2, "graph": 0.8}
 _QUERY_TYPE_MAP = {"fulltext": "keyword_search", "semantic": "semantic_search",
                    "graph": "graph_traversal", "hybrid": "semantic_search"}
+
+_semantic_warned = False
 
 
 # Full-text, vector, graph, and hybrid document search.
@@ -110,6 +112,13 @@ class SemanticQueryEngine:
 
     def vector_similarity_search(self, query: str, limit: int = 10,
                                  sensitivity_filter: Optional[List[str]] = None) -> List[Dict]:
+        global _semantic_warned
+        if not _embedder_available():
+            if not _semantic_warned:
+                logger.warning("Semantic search disabled (voyageai/VOYAGE_API_KEY not configured); "
+                               "skipping vector search for the rest of this session.")
+                _semantic_warned = True
+            return []
         try:
             query_vector = self._generate_query_embedding(query)
             query_str = "[" + ",".join(str(v) for v in query_vector) + "]"
@@ -139,8 +148,7 @@ class SemanticQueryEngine:
                     r["score"] = float(r["score"]) if r["score"] else 0.0
                     results.append(r)
                 return results
-        except (ImportError, EnvironmentError) as exc:
-            logger.warning("Semantic search unavailable: %s", exc)
+        except (ImportError, EnvironmentError):
             return []
         except psycopg2.Error as exc:
             logger.error("Vector similarity search failed: %s", exc)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 import anthropic
@@ -208,6 +209,7 @@ You are OmniGraph Assistant, an AI that answers questions from an enterprise kno
 
     def run(self, question: str) -> Dict[str, Any]:
         messages: List[Dict[str, Any]] = [{"role": "user", "content": question}]
+        tools_used: List[Dict[str, Any]] = []
 
         while True:
             with self.client.messages.stream(
@@ -223,8 +225,7 @@ You are OmniGraph Assistant, an AI that answers questions from an enterprise kno
             messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "end_turn":
-                answer = next((b.text for b in response.content if b.type == "text"), "")
-                return {"answer": answer, "messages": messages}
+                break
 
             if response.stop_reason != "tool_use":
                 break
@@ -240,6 +241,7 @@ You are OmniGraph Assistant, an AI that answers questions from an enterprise kno
                             result = f"Tool error: {exc}"
                     else:
                         result = f"Unknown tool: {block.name}"
+                    tools_used.append({"name": block.name, "input": dict(block.input)})
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -248,7 +250,42 @@ You are OmniGraph Assistant, an AI that answers questions from an enterprise kno
             messages.append({"role": "user", "content": tool_results})
 
         answer = next((b.text for b in response.content if b.type == "text"), "")
-        return {"answer": answer, "messages": messages}
+        citations = self._extract_citations(answer)
+        return {
+            "answer": answer,
+            "citations": citations,
+            "tools_used": tools_used,
+            "stop_reason": response.stop_reason,
+            "messages": messages,
+        }
+
+    def _extract_citations(self, answer: str) -> List[Dict[str, Any]]:
+        ids = []
+        seen = set()
+        for m in re.finditer(r"\[doc_id=(\d+)\]", answer):
+            doc_id = int(m.group(1))
+            if doc_id not in seen:
+                seen.add(doc_id)
+                ids.append(doc_id)
+        if not ids:
+            return []
+        try:
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT document_id, title, source_type FROM omnigraph.documents "
+                    "WHERE document_id = ANY(%s)",
+                    (ids,),
+                )
+                rows = {r[0]: {"document_id": r[0], "title": r[1], "source_type": r[2]}
+                        for r in cur.fetchall()}
+        except Exception:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+            rows = {}
+        return [rows.get(i, {"document_id": i, "title": "(unknown)", "source_type": ""})
+                for i in ids]
 
 
  
