@@ -1,39 +1,78 @@
+<div align="center">
+
 # OmniGraph
 
-**An enterprise-grade knowledge graph and agentic RAG platform built on PostgreSQL, pgvector, and Anthropic Claude.**
+### Enterprise Knowledge Graph & Agentic RAG Platform
 
-OmniGraph ingests organizational documents, extracts entities / concepts / relationships into a queryable graph, and exposes retrieval through a hybrid search engine (full-text + vector + graph traversal) fronted by an Anthropic tool-use agent. Designed around production concerns: RBAC, sensitivity tiers, audit trails, versioning, and deterministic deduplication.
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Anthropic](https://img.shields.io/badge/Anthropic-Claude-D4A574?style=for-the-badge&logo=anthropic&logoColor=white)](https://www.anthropic.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
----
+**Ingest documents. Extract knowledge graphs. Query with AI agents.**
 
-- Python 3.14+
-- PostgreSQL 14+
-- `pip`
+OmniGraph ingests organizational documents, extracts entities, concepts, and relationships into a queryable graph, and exposes retrieval through a hybrid search engine (full-text + vector + graph traversal) fronted by an Anthropic tool-use agent. Built around production concerns: RBAC, sensitivity tiers, audit trails, versioning, and deterministic deduplication.
 
-- **Hybrid retrieval engine** — Postgres full-text search (`tsvector` + GIN), 1024-dim Voyage AI vector similarity, and graph traversal unified behind a single weighted ranker.
-- **Agentic RAG** — Anthropic Claude agent with a native tool-use loop exposing five RBAC-gated retrieval tools (`hybrid_search`, `find_experts`, `get_entity_documents`, `find_related_concepts`, `get_document_content`).
-- **Relational knowledge graph** — 19-table PostgreSQL schema modeling documents, entities, concepts, relations, taxonomies, and user/role access policies.
-- **Deterministic ingestion** — Text normalization → SHA-256 deduplication → versioned writes → async embedding with UPSERT semantics on `(source_type, source_id, model_name)`.
-- **Enterprise security model** — Role-based access control joined with per-row sensitivity levels (`public` / `internal` / `confidential` / `restricted`); every query is filtered post-retrieval and logged to audit tables.
-- **Database-first design** — 6 stored procedures and 5 triggers enforce invariants (FTS refresh, timestamping, audit emission) in SQL rather than application code.
+<br/>
+
+<img src="./database-schema.jpeg" alt="OmniGraph database schema ER diagram" width="800" />
+
+</div>
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-| --- | --- |
-| Language | Python 3.10+ |
-| Database | PostgreSQL 14+ |
-| Vector store | `pgvector` (1024-dim, cosine) |
-| Embeddings | Voyage AI — `voyage-3` |
-| LLM Agent | Anthropic Claude (tool-use + streaming) |
-| Driver | `psycopg2` |
-| Interface | ANSI-rendered terminal console |
+<table>
+<tr>
+<td align="center" width="96">
+<img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="48" height="48" alt="Python" />
+<br/><b>Python</b>
+</td>
+<td align="center" width="96">
+<img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/postgresql/postgresql-original.svg" width="48" height="48" alt="PostgreSQL" />
+<br/><b>PostgreSQL</b>
+</td>
+<td align="center" width="96">
+<img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/sqlalchemy/sqlalchemy-original.svg" width="48" height="48" alt="pgvector" />
+<br/><b>pgvector</b>
+</td>
+<td align="center" width="96">
+<img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Anthropic_logo.svg" width="48" height="48" alt="Anthropic" />
+<br/><b>Claude AI</b>
+</td>
+<td align="center" width="96">
+<img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/git/git-original.svg" width="48" height="48" alt="Git" />
+<br/><b>Git</b>
+</td>
+</tr>
+</table>
+
+| Layer | Technology | Purpose |
+| :--- | :--- | :--- |
+| **Language** | Python 3.10+ | Core application logic |
+| **Database** | PostgreSQL 14+ | Relational storage, FTS (`tsvector` + GIN indexes) |
+| **Vector Store** | pgvector (1024-dim, cosine) | Semantic similarity search |
+| **Embeddings** | Voyage AI (`voyage-3`) | Document & entity embedding generation |
+| **LLM Agent** | Anthropic Claude (tool-use + streaming) | Agentic RAG with 5 retrieval tools |
+| **DB Driver** | psycopg2 | PostgreSQL wire protocol |
+| **Config** | python-dotenv | Environment variable management |
+| **Interface** | ANSI-rendered terminal console | Interactive TUI with 3 functional menus |
 
 ---
 
-## Architecture at a Glance
+## Key Features
+
+- **Hybrid Retrieval Engine** — Postgres full-text search (`tsvector` + GIN), 1024-dim Voyage AI vector similarity, and graph traversal unified behind a single weighted ranker
+- **Agentic RAG** — Claude agent with a native tool-use loop exposing five RBAC-gated retrieval tools (`hybrid_search`, `find_experts`, `get_entity_documents`, `find_related_concepts`, `get_document_content`)
+- **Relational Knowledge Graph** — 19-table PostgreSQL schema modeling documents, entities, concepts, relations, taxonomies, and user/role access policies
+- **Deterministic Ingestion** — Text normalization -> SHA-256 deduplication -> versioned writes -> async embedding with UPSERT semantics
+- **Enterprise Security Model** — Role-based access control with per-row sensitivity levels (`public` / `internal` / `confidential` / `restricted`); every query is filtered and logged
+- **Database-First Design** — 6 stored procedures and 5 triggers enforce invariants (FTS refresh, timestamping, audit emission) in SQL rather than application code
+
+---
+
+## Architecture
 
 ```text
                 ┌──────────────────────────────────────────────┐
@@ -63,7 +102,7 @@ OmniGraph ingests organizational documents, extracts entities / concepts / relat
 
 ---
 
-## Data Flow — From Raw Text to Graph
+## Data Flow
 
 ```text
 raw text
@@ -82,81 +121,42 @@ Every stage is idempotent: hash-based dedup on write, `ON CONFLICT` upserts on g
 
 ---
 
-## Core Modules
-
-| Module | Responsibility |
-| --- | --- |
-| [`ingestion_pipeline.py`](omnigraph/ingestion_pipeline.py) | Normalization, SHA-256 dedup, versioning, batch ingest, embedding persistence |
-| [`entity_relation_extractor.py`](omnigraph/entity_relation_extractor.py) | Pattern-based NER (technology / organization / standard / person), concept extraction with domain tagging, relation mining via 9 regex patterns |
-| [`graph_builder.py`](omnigraph/graph_builder.py) | Entity / relation CRUD, taxonomy trees, concept hierarchies, neighborhood exploration, graph statistics |
-| [`semantic_query_engine.py`](omnigraph/semantic_query_engine.py) | Full-text, vector, graph, and hybrid search strategies with weighted ranking |
-| [`access_control_audit.py`](omnigraph/access_control_audit.py) | RBAC enforcement, sensitivity checks, query + audit logging, analytics |
-| [`agentic_rag.py`](omnigraph/agentic_rag.py) | Anthropic tool-use agent; orchestrates retrieval tools with RBAC filtering |
-| [`embedder.py`](omnigraph/embedder.py) | Thin Voyage AI client wrapper |
-| [`console_app.py`](omnigraph/console_app.py) | ANSI terminal UI with three functional menus |
-
----
-
-## Database Schema — 19 Tables
-
-All objects live in schema `omnigraph`. Full DDL (constraints, indexes, `CHECK` enums) in [`sql/schema.sql`](sql/schema.sql).
-
-<p align="center">
-  <img
-    src="./database-schema.jpeg"
-    alt="OmniGraph database schema ER diagram"
-    width="920"
-  />
-</p>
-
-**Identity & Access**: `roles` · `users` · `user_roles` · `access_policies`
-**Content**: `documents` · `document_versions` · `taxonomy` · `tags` · `document_tags`
-**Knowledge Graph**: `entities` · `relations` · `concepts` · `concept_hierarchy` · `entity_concepts` · `document_entities` · `document_concepts`
-**Semantic Layer**: `embeddings` (vector storage indexed by `source_type` + `source_id`)
-**Observability**: `query_logs` · `audit_logs`
-
-Key design decisions:
-
-- **Polymorphic embeddings** — One `embeddings` table spans documents, entities, and concepts via `(source_type, source_id)`, enabling semantic search across all graph nodes uniformly.
-- **Directed relations** — `relations(source_entity_id, target_entity_id, relation_type, strength, source_document_id)` preserves provenance back to the document that generated each edge.
-- **Row-level sensitivity** — `documents.sensitivity_level` is the final authority; every retrieval is re-checked against `access_policies` at read time, not just at write time.
-
----
-
-## Retrieval Strategies
-
-| Strategy | Mechanism | When to use |
-| --- | --- | --- |
-| `fulltext` | PostgreSQL `tsvector` / `tsquery` over `title + content`, GIN-indexed | Exact keyword matches, acronyms |
-| `semantic` | Voyage `voyage-3` query embedding → pgvector nearest neighbor | Natural-language intent, paraphrases |
-| `graph` | Traverse `document_entities → entities → relations → entities → document_entities` | "What else is connected to X?" |
-| `hybrid` (default) | All three, blended with weights `{fulltext: 1.0, semantic: 1.2, graph: 0.8}` | Most production queries |
-
-Every result is post-filtered through `AccessControlManager.check_access` before returning to the caller or agent.
-
----
-
 ## Quick Start
 
+### Prerequisites
+
+- Python 3.10+
+- PostgreSQL 14+ with [`pgvector`](https://github.com/pgvector/pgvector) extension
+- [Voyage AI](https://www.voyageai.com/) API key
+- [Anthropic](https://console.anthropic.com/) API key
+
+### Installation
+
 ```bash
-# 1. Initialize the database
+# Clone the repository
+git clone https://github.com/vaishcodescape/Omni-Graph.git
+cd Omni-Graph
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Initialize the database
 createdb omnigraph
 psql -d omnigraph -f sql/schema.sql
 psql -d omnigraph -f sql/sample_data.sql
 psql -d omnigraph -f sql/procedures_triggers.sql
 
-# 2. Install dependencies
-python -m pip install -r requirements.txt
-
-# 3. Set credentials
-export VOYAGE_API_KEY=...
-export ANTHROPIC_API_KEY=...
+# Set environment variables
+export VOYAGE_API_KEY=your_voyage_key
+export ANTHROPIC_API_KEY=your_anthropic_key
 export OMNIGRAPH_DB_USER=postgres
 export OMNIGRAPH_DB_PASSWORD=postgres
 
-# 4. Launch the console
+# Launch
 python exec.py
 ```
+
+> **Note:** Initialization order matters: `schema.sql` -> `sample_data.sql` -> `procedures_triggers.sql`
 
 ---
 
@@ -185,40 +185,7 @@ results = engine.search("container orchestration", strategy="hybrid", limit=5)
 
 ---
 
-## Console Capabilities
-
-**Search & Discover**
-Ask (Agent) · Full-text search · Hybrid / semantic search · Find experts · Explore related concepts · Entity-based document lookup · Entity neighborhood view · Entity path lookup
-
-**Manage Documents**
-Add · Update metadata · Tag · View detail · List recent · Run extraction
-
-**Administration & Audit**
-Graph stats · Structure views · Audit trail · Sensitive-access report · Query analytics · Role assignment / revocation · Read-only SQL sandbox (SELECT / CTE with safety checks)
-
-### Sample agent queries
-
-```text
-What documents explain Kubernetes deployment?
-Who are the experts on Deep Learning?
-What concepts are related to Machine Learning?
-Which documents mention PostgreSQL?
-```
-
----
-
-## Engineering Practices Demonstrated
-
-- **Separation of concerns** — Retrieval, access control, and orchestration are distinct modules; the agent composes them rather than reimplementing them.
-- **SQL-as-contract** — Invariants (timestamping, FTS maintenance, audit emission) are enforced by triggers and stored procedures, not ad-hoc application code.
-- **Idempotent writes** — Hash dedup, `ON CONFLICT` upserts, and stable embedding keys make the pipeline safe to re-run.
-- **Graceful degradation** — Embedding failures are logged but do not roll back document writes; FTS and graph retrieval remain functional.
-- **Provenance** — Every extracted relation stores `source_document_id`, making the graph auditable back to source text.
-- **Observability by default** — `query_logs` captures latency and result counts per strategy; `audit_logs` captures every sensitive access.
-
----
-
-## Repository Layout
+## Project Structure
 
 ```text
 Omni-Graph/
@@ -230,47 +197,128 @@ Omni-Graph/
 │   ├── sample_data.sql                  # Seed roles / users / documents
 │   ├── procedures_triggers.sql          # 6 procs + 5 triggers
 │   ├── retrieval.sql                    # Advanced retrieval queries
-│   └── queries.sql                      # Recursive CTEs, window functions, FTS examples
+│   └── queries.sql                      # Recursive CTEs, window functions, FTS
 └── omnigraph/
-    ├── ingestion_pipeline.py
-    ├── entity_relation_extractor.py
-    ├── graph_builder.py
-    ├── semantic_query_engine.py
-    ├── access_control_audit.py
-    ├── agentic_rag.py
-    ├── embedder.py
-    └── console_app.py
+    ├── __init__.py
+    ├── ingestion_pipeline.py            # Normalization, SHA-256 dedup, versioning
+    ├── entity_relation_extractor.py     # Pattern-based NER, concept extraction
+    ├── graph_builder.py                 # Entity/relation CRUD, taxonomy trees
+    ├── semantic_query_engine.py         # Full-text, vector, graph, hybrid search
+    ├── access_control_audit.py          # RBAC enforcement, audit logging
+    ├── agentic_rag.py                   # Claude tool-use agent orchestration
+    ├── embedder.py                      # Voyage AI client wrapper
+    └── console_app.py                   # ANSI terminal UI
 ```
 
 ---
 
-## Configuration Reference
+## Database Schema — 19 Tables
 
-| Env var | Purpose |
-| --- | --- |
-| `OMNIGRAPH_DB_USER` | PostgreSQL user (default `postgres`) |
-| `OMNIGRAPH_DB_PASSWORD` | PostgreSQL password |
-| `VOYAGE_API_KEY` | Required for embedding + semantic search |
-| `ANTHROPIC_API_KEY` | Required for the agentic RAG loop |
+All objects live in schema `omnigraph`. Full DDL in [`sql/schema.sql`](sql/schema.sql).
 
-Sample usernames seeded by `sample_data.sql`: `agarwal.priya`, `chen.wei`, `johnson.mark`, `martinez.sofia`, `okafor.emeka`, `tanaka.yuki`, `williams.alex`, `kumar.rahul`, `fischer.anna`, `brown.david`.
+**Identity & Access:** `roles` · `users` · `user_roles` · `access_policies`
+**Content:** `documents` · `document_versions` · `taxonomy` · `tags` · `document_tags`
+**Knowledge Graph:** `entities` · `relations` · `concepts` · `concept_hierarchy` · `entity_concepts` · `document_entities` · `document_concepts`
+**Semantic Layer:** `embeddings` (vector storage indexed by `source_type` + `source_id`)
+**Observability:** `query_logs` · `audit_logs`
+
+### Design Decisions
+
+| Decision | Rationale |
+| :--- | :--- |
+| **Polymorphic embeddings** | One `embeddings` table spans documents, entities, and concepts via `(source_type, source_id)` — unified semantic search across all graph nodes |
+| **Directed relations** | `relations(source_entity_id, target_entity_id, relation_type, strength, source_document_id)` preserves provenance back to the source document |
+| **Row-level sensitivity** | `documents.sensitivity_level` is authoritative; every retrieval re-checks `access_policies` at read time |
 
 ---
 
-## Notes
+## Retrieval Strategies
 
-- Initialization order is significant: `schema.sql` → `sample_data.sql` → `procedures_triggers.sql`.
-- Some admin views require the `view_graph` permission, which is not in the seed role arrays by default:
+| Strategy | Mechanism | Best For |
+| :--- | :--- | :--- |
+| `fulltext` | PostgreSQL `tsvector` / `tsquery`, GIN-indexed | Exact keyword matches, acronyms |
+| `semantic` | Voyage `voyage-3` query embedding -> pgvector nearest neighbor | Natural-language intent, paraphrases |
+| `graph` | Traverse `document_entities -> entities -> relations -> entities -> document_entities` | "What else is connected to X?" |
+| `hybrid` | All three, blended with weights `{fulltext: 1.0, semantic: 1.2, graph: 0.8}` | Most production queries (default) |
 
-```sql
-UPDATE omnigraph.roles
-SET permissions = array_append(permissions, 'view_graph')
-WHERE role_name = 'admin'
-  AND NOT ('view_graph' = ANY(permissions));
+Every result is post-filtered through `AccessControlManager.check_access` before returning to the caller or agent.
+
+---
+
+## Console Capabilities
+
+| Menu | Features |
+| :--- | :--- |
+| **Search & Discover** | Ask (Agent), Full-text search, Hybrid/semantic search, Find experts, Explore related concepts, Entity-based document lookup, Entity neighborhood view, Entity path lookup |
+| **Manage Documents** | Add, Update metadata, Tag, View detail, List recent, Run extraction |
+| **Administration** | Graph stats, Structure views, Audit trail, Sensitive-access report, Query analytics, Role assignment/revocation, Read-only SQL sandbox |
+
+### Sample Agent Queries
+
+```text
+What documents explain Kubernetes deployment?
+Who are the experts on Deep Learning?
+What concepts are related to Machine Learning?
+Which documents mention PostgreSQL?
 ```
+
+---
+
+## Engineering Highlights
+
+| Practice | Implementation |
+| :--- | :--- |
+| **Separation of Concerns** | Retrieval, access control, and orchestration are distinct modules; the agent composes them |
+| **SQL-as-Contract** | Invariants (timestamping, FTS maintenance, audit emission) enforced by triggers and stored procedures |
+| **Idempotent Writes** | Hash dedup, `ON CONFLICT` upserts, and stable embedding keys make the pipeline safe to re-run |
+| **Graceful Degradation** | Embedding failures are logged but don't roll back document writes; FTS and graph retrieval remain functional |
+| **Provenance Tracking** | Every extracted relation stores `source_document_id`, making the graph auditable |
+| **Observability by Default** | `query_logs` captures latency and result counts; `audit_logs` captures every sensitive access |
+
+---
+
+## Configuration
+
+| Environment Variable | Purpose | Required |
+| :--- | :--- | :---: |
+| `OMNIGRAPH_DB_USER` | PostgreSQL user (default: `postgres`) | No |
+| `OMNIGRAPH_DB_PASSWORD` | PostgreSQL password | Yes |
+| `VOYAGE_API_KEY` | Voyage AI — embedding + semantic search | Yes |
+| `ANTHROPIC_API_KEY` | Anthropic Claude — agentic RAG loop | Yes |
+
+---
+
+## Contributing
+
+Contributions are welcome! Here's how to get started:
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/your-feature`)
+3. **Commit** your changes (`git commit -m 'Add your feature'`)
+4. **Push** to the branch (`git push origin feature/your-feature`)
+5. **Open** a Pull Request
+
+### Areas for Contribution
+
+- Additional NER patterns and entity extraction strategies
+- New retrieval strategies or ranking algorithms
+- Frontend/web UI for the console
+- Docker/Docker Compose setup for easier deployment
+- Test coverage improvements
+- Documentation and examples
 
 ---
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+
+**Built by [Aditya Vaish](https://github.com/vaishcodescape)**
+
+If you found this project useful, consider giving it a star!
+
+</div>
