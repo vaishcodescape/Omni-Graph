@@ -2,7 +2,7 @@
 
 # OmniGraph
 
-### Enterprise Knowledge Graph & Agentic RAG Platform
+### Enterprise Knowledge Graph & Agentic RAG System
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
