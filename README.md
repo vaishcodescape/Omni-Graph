@@ -317,7 +317,7 @@ MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 
-**Built by [Aditya Vaish](https://github.com/vaishcodescape)**
+**Built by [vaishcodescape](https://github.com/vaishcodescape)**
 
 If you found this project useful, consider giving it a star!
 
