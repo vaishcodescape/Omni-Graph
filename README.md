@@ -34,16 +34,18 @@ OmniGraph ingests organizational documents, extracts entities, concepts, and rel
 <br/><b>PostgreSQL</b>
 </td>
 <td align="center" width="96">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://cdn.simpleicons.org/sqlalchemy/white" />
 <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/sqlalchemy/sqlalchemy-original.svg" width="48" height="48" alt="pgvector" />
+</picture>
 <br/><b>pgvector</b>
 </td>
 <td align="center" width="96">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://cdn.simpleicons.org/anthropic/white" />
 <img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Anthropic_logo.svg" width="48" height="48" alt="Anthropic" />
+</picture>
 <br/><b>Claude AI</b>
-</td>
-<td align="center" width="96">
-<img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/git/git-original.svg" width="48" height="48" alt="Git" />
-<br/><b>Git</b>
 </td>
 </tr>
 </table>
